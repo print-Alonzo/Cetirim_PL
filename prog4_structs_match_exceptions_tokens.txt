@@ -1,0 +1,722 @@
+
+========================================================================
+  SOURCE:  prog4_structs_match_exceptions.src
+========================================================================
+
+     1 | // prog4_structs_match_exceptions.src
+     2 | // Demonstrates: struct, typedef (alias & inline struct def), empty struct body,
+     3 | //               match statement (with relational pattern, no wildcard),
+     4 | //               match expression, struct member access (.),
+     5 | //               guard, try/catch/finally, multiple catch, try without finally,
+     6 | //               throw, string & char literals, escape sequences,
+     7 | //               interpolated strings, bool type
+     8 | 
+     9 | // ---- Typedef with inline struct definition (typedef struct_def identifier) ----
+    10 | typedef struct Color { int r; int g; int b; } RGB;
+    11 | 
+    12 | // ---- Empty struct body (field_list → ε) ----
+    13 | struct Tag {};
+    14 | 
+    15 | // ---- Struct: Student record ----
+    16 | struct Student {
+    17 |     string name;
+    18 |     int id;
+    19 |     float gpa;
+    20 |     bool enrolled;
+    21 | };
+    22 | 
+    23 | // ---- Typedef: alias for int ----
+    24 | typedef int StudentID;
+    25 | 
+    26 | // ---- Typedef wrapping a struct ----
+    27 | typedef struct Student StudentRecord;
+    28 | 
+    29 | // ---- Returns a letter grade using if-else ----
+    30 | string grade_letter(float gpa) {
+    31 |     if (gpa >= 3.5) {
+    32 |         return "A";
+    33 |     } else {
+    34 |         if (gpa >= 3.0) {
+    35 |             return "B";
+    36 |         } else {
+    37 |             if (gpa >= 2.5) {
+    38 |                 return "C";
+    39 |             } else {
+    40 |                 if (gpa >= 2.0) {
+    41 |                     return "D";
+    42 |                 } else {
+    43 |                     return "F";
+    44 |                 }
+    45 |             }
+    46 |         }
+    47 |     }
+    48 | }
+    49 | 
+    50 | // ---- Validates a student ID; throws on bad input ----
+    51 | void validate_id(StudentID id) {
+    52 |     guard (id > 0 && id <= 99999) else {
+    53 |         throw "Invalid student ID";
+    54 |     }
+    55 |     print("ID", id, "is valid.");
+    56 | }
+    57 | 
+    58 | // ---- Processes a status code using match statement ----
+    59 | void handle_status(int code) {
+    60 |     match (code) {
+    61 |         0 => print("OK");
+    62 |         1 => print("Warning: low memory");
+    63 |         2 => print("Error: disk full");
+    64 |         3..9 => print("Unknown error code");
+    65 |         code > 9 => print("Very high error code");
+    66 |         _ => print("Unrecognized code");
+    67 |     }
+    68 | }
+    69 | 
+    70 | void main() {
+    71 |     var struct Student s1;
+    72 |     var string info, grade, msg, severity;
+    73 |     var int status;
+    74 |     var char newline, tab, quote;
+    75 |     var bool p, q;
+    76 | 
+    77 |     // Struct instantiation
+    78 |     s1.name = "Alonzo";
+    79 |     s1.id = 20220001;
+    80 |     s1.gpa = 3.75;
+    81 |     s1.enrolled = true;
+    82 | 
+    83 |     // Interpolated string with struct fields
+    84 |     info = `Student: {s1.name}  ID: {s1.id}  GPA: {s1.gpa}`;
+    85 |     print(info);
+    86 |     print("Enrolled:", s1.enrolled);
+    87 | 
+    88 |     // Match expression for grade
+    89 |     grade = grade_letter(s1.gpa);
+    90 |     print("Letter grade:", grade);
+    91 | 
+    92 |     // Struct member access via . (lvalue and expression forms)
+    93 |     s1.name = "Updated";
+    94 |     print("Via member .name:", s1.name, "GPA:", s1.gpa);
+    95 | 
+    96 |     // Match statement on integer
+    97 |     status = 2;
+    98 |     handle_status(status);
+    99 | 
+   100 |     // Match expression (match_expr — match used as a value)
+   101 |     severity = match (status) {
+   102 |         0 => "low",
+   103 |         1 => "medium",
+   104 |         _ => "high"
+   105 |     };
+   106 |     print("Severity:", severity);
+   107 | 
+   108 |     // Match statement without wildcard (match_default → ε)
+   109 |     match (p) {
+   110 |         true => print("p is true");
+   111 |         false => print("p is false");
+   112 |     }
+   113 | 
+   114 |     // Multiple catch clauses (catch_list → catch_clause catch_list)
+   115 |     try {
+   116 |         validate_id(20220001);   // valid
+   117 |         validate_id(-5);         // throws
+   118 |     } catch (e) {
+   119 |         print("Caught exception:", e);
+   120 |     } catch (err) {
+   121 |         print("Second handler:", err);
+   122 |     } finally {
+   123 |         print("Validation routine complete.");
+   124 |     }
+   125 | 
+   126 |     // try/catch without finally (finally_clause → ε)
+   127 |     try {
+   128 |         validate_id(99999);
+   129 |     } catch (ex) {
+   130 |         print("Validation passed or caught:", ex);
+   131 |     }
+   132 | 
+   133 |     // Char literals and escape sequences
+   134 |     newline = '\n';
+   135 |     tab = '\t';
+   136 |     quote = '\"';
+   137 |     print("Special chars stored:", newline, tab, quote);
+   138 | 
+   139 |     // String with escape sequences
+   140 |     msg = "Line1\nLine2\tTabbed\\Backslash";
+   141 |     print(msg);
+   142 | 
+   143 |     // Boolean logic
+   144 |     p = true;
+   145 |     q = false;
+   146 |     if (p && !q) {
+   147 |         print("p is true and q is false");
+   148 |     }
+   149 |     if (p || q) {
+   150 |         print("At least one is true");
+   151 |     }
+   152 | }
+
+========================================================================
+  LEXICAL ERRORS  (0 found)
+========================================================================
+
+  None.
+
+========================================================================
+  TOKEN STREAM  (517 tokens)
+========================================================================
+
+      #  TYPE              LEXEME                             LINE    COL  ATTR
+  --------------------------------------------------------------------------------
+      1  KEYWORD           'typedef'                            10      1  
+      2  KEYWORD           'struct'                             10      9  
+      3  IDENTIFIER        'Color'                              10     16  
+      4  LBRACE            '{'                                  10     22  
+      5  KEYWORD           'int'                                10     24  
+      6  IDENTIFIER        'r'                                  10     28  
+      7  SEMICOLON         ';'                                  10     29  
+      8  KEYWORD           'int'                                10     31  
+      9  IDENTIFIER        'g'                                  10     35  
+     10  SEMICOLON         ';'                                  10     36  
+     11  KEYWORD           'int'                                10     38  
+     12  IDENTIFIER        'b'                                  10     42  
+     13  SEMICOLON         ';'                                  10     43  
+     14  RBRACE            '}'                                  10     45  
+     15  IDENTIFIER        'RGB'                                10     47  
+     16  SEMICOLON         ';'                                  10     50  
+     17  KEYWORD           'struct'                             13      1  
+     18  IDENTIFIER        'Tag'                                13      8  
+     19  LBRACE            '{'                                  13     12  
+     20  RBRACE            '}'                                  13     13  
+     21  SEMICOLON         ';'                                  13     14  
+     22  KEYWORD           'struct'                             16      1  
+     23  IDENTIFIER        'Student'                            16      8  
+     24  LBRACE            '{'                                  16     16  
+     25  KEYWORD           'string'                             17      5  
+     26  IDENTIFIER        'name'                               17     12  
+     27  SEMICOLON         ';'                                  17     16  
+     28  KEYWORD           'int'                                18      5  
+     29  IDENTIFIER        'id'                                 18      9  
+     30  SEMICOLON         ';'                                  18     11  
+     31  KEYWORD           'float'                              19      5  
+     32  IDENTIFIER        'gpa'                                19     11  
+     33  SEMICOLON         ';'                                  19     14  
+     34  KEYWORD           'bool'                               20      5  
+     35  IDENTIFIER        'enrolled'                           20     10  
+     36  SEMICOLON         ';'                                  20     18  
+     37  RBRACE            '}'                                  21      1  
+     38  SEMICOLON         ';'                                  21      2  
+     39  KEYWORD           'typedef'                            24      1  
+     40  KEYWORD           'int'                                24      9  
+     41  IDENTIFIER        'StudentID'                          24     13  
+     42  SEMICOLON         ';'                                  24     22  
+     43  KEYWORD           'typedef'                            27      1  
+     44  KEYWORD           'struct'                             27      9  
+     45  IDENTIFIER        'Student'                            27     16  
+     46  IDENTIFIER        'StudentRecord'                      27     24  
+     47  SEMICOLON         ';'                                  27     37  
+     48  KEYWORD           'string'                             30      1  
+     49  IDENTIFIER        'grade_letter'                       30      8  
+     50  LPAREN            '('                                  30     20  
+     51  KEYWORD           'float'                              30     21  
+     52  IDENTIFIER        'gpa'                                30     27  
+     53  RPAREN            ')'                                  30     30  
+     54  LBRACE            '{'                                  30     32  
+     55  KEYWORD           'if'                                 31      5  
+     56  LPAREN            '('                                  31      8  
+     57  IDENTIFIER        'gpa'                                31      9  
+     58  REL_OP            '>='                                 31     13  
+     59  FLOAT_LIT         '3.5'                                31     16  3.5
+     60  RPAREN            ')'                                  31     19  
+     61  LBRACE            '{'                                  31     21  
+     62  KEYWORD           'return'                             32      9  
+     63  STRING_LIT        '"A"'                                32     16  'A'
+     64  SEMICOLON         ';'                                  32     19  
+     65  RBRACE            '}'                                  33      5  
+     66  KEYWORD           'else'                               33      7  
+     67  LBRACE            '{'                                  33     12  
+     68  KEYWORD           'if'                                 34      9  
+     69  LPAREN            '('                                  34     12  
+     70  IDENTIFIER        'gpa'                                34     13  
+     71  REL_OP            '>='                                 34     17  
+     72  FLOAT_LIT         '3.0'                                34     20  3.0
+     73  RPAREN            ')'                                  34     23  
+     74  LBRACE            '{'                                  34     25  
+     75  KEYWORD           'return'                             35     13  
+     76  STRING_LIT        '"B"'                                35     20  'B'
+     77  SEMICOLON         ';'                                  35     23  
+     78  RBRACE            '}'                                  36      9  
+     79  KEYWORD           'else'                               36     11  
+     80  LBRACE            '{'                                  36     16  
+     81  KEYWORD           'if'                                 37     13  
+     82  LPAREN            '('                                  37     16  
+     83  IDENTIFIER        'gpa'                                37     17  
+     84  REL_OP            '>='                                 37     21  
+     85  FLOAT_LIT         '2.5'                                37     24  2.5
+     86  RPAREN            ')'                                  37     27  
+     87  LBRACE            '{'                                  37     29  
+     88  KEYWORD           'return'                             38     17  
+     89  STRING_LIT        '"C"'                                38     24  'C'
+     90  SEMICOLON         ';'                                  38     27  
+     91  RBRACE            '}'                                  39     13  
+     92  KEYWORD           'else'                               39     15  
+     93  LBRACE            '{'                                  39     20  
+     94  KEYWORD           'if'                                 40     17  
+     95  LPAREN            '('                                  40     20  
+     96  IDENTIFIER        'gpa'                                40     21  
+     97  REL_OP            '>='                                 40     25  
+     98  FLOAT_LIT         '2.0'                                40     28  2.0
+     99  RPAREN            ')'                                  40     31  
+    100  LBRACE            '{'                                  40     33  
+    101  KEYWORD           'return'                             41     21  
+    102  STRING_LIT        '"D"'                                41     28  'D'
+    103  SEMICOLON         ';'                                  41     31  
+    104  RBRACE            '}'                                  42     17  
+    105  KEYWORD           'else'                               42     19  
+    106  LBRACE            '{'                                  42     24  
+    107  KEYWORD           'return'                             43     21  
+    108  STRING_LIT        '"F"'                                43     28  'F'
+    109  SEMICOLON         ';'                                  43     31  
+    110  RBRACE            '}'                                  44     17  
+    111  RBRACE            '}'                                  45     13  
+    112  RBRACE            '}'                                  46      9  
+    113  RBRACE            '}'                                  47      5  
+    114  RBRACE            '}'                                  48      1  
+    115  KEYWORD           'void'                               51      1  
+    116  IDENTIFIER        'validate_id'                        51      6  
+    117  LPAREN            '('                                  51     17  
+    118  IDENTIFIER        'StudentID'                          51     18  
+    119  IDENTIFIER        'id'                                 51     28  
+    120  RPAREN            ')'                                  51     30  
+    121  LBRACE            '{'                                  51     32  
+    122  KEYWORD           'guard'                              52      5  
+    123  LPAREN            '('                                  52     11  
+    124  IDENTIFIER        'id'                                 52     12  
+    125  REL_OP            '>'                                  52     15  
+    126  INTEGER_LIT       '0'                                  52     17  0
+    127  LOGIC_OP          '&&'                                 52     19  
+    128  IDENTIFIER        'id'                                 52     22  
+    129  REL_OP            '<='                                 52     25  
+    130  INTEGER_LIT       '99999'                              52     28  99999
+    131  RPAREN            ')'                                  52     33  
+    132  KEYWORD           'else'                               52     35  
+    133  LBRACE            '{'                                  52     40  
+    134  KEYWORD           'throw'                              53      9  
+    135  STRING_LIT        '"Invalid student ID"'               53     15  'Invalid student ID'
+    136  SEMICOLON         ';'                                  53     35  
+    137  RBRACE            '}'                                  54      5  
+    138  KEYWORD           'print'                              55      5  
+    139  LPAREN            '('                                  55     10  
+    140  STRING_LIT        '"ID"'                               55     11  'ID'
+    141  COMMA             ','                                  55     15  
+    142  IDENTIFIER        'id'                                 55     17  
+    143  COMMA             ','                                  55     19  
+    144  STRING_LIT        '"is valid."'                        55     21  'is valid.'
+    145  RPAREN            ')'                                  55     32  
+    146  SEMICOLON         ';'                                  55     33  
+    147  RBRACE            '}'                                  56      1  
+    148  KEYWORD           'void'                               59      1  
+    149  IDENTIFIER        'handle_status'                      59      6  
+    150  LPAREN            '('                                  59     19  
+    151  KEYWORD           'int'                                59     20  
+    152  IDENTIFIER        'code'                               59     24  
+    153  RPAREN            ')'                                  59     28  
+    154  LBRACE            '{'                                  59     30  
+    155  KEYWORD           'match'                              60      5  
+    156  LPAREN            '('                                  60     11  
+    157  IDENTIFIER        'code'                               60     12  
+    158  RPAREN            ')'                                  60     16  
+    159  LBRACE            '{'                                  60     18  
+    160  INTEGER_LIT       '0'                                  61      9  0
+    161  MATCH_ARROW       '=>'                                 61     11  
+    162  KEYWORD           'print'                              61     14  
+    163  LPAREN            '('                                  61     19  
+    164  STRING_LIT        '"OK"'                               61     20  'OK'
+    165  RPAREN            ')'                                  61     24  
+    166  SEMICOLON         ';'                                  61     25  
+    167  INTEGER_LIT       '1'                                  62      9  1
+    168  MATCH_ARROW       '=>'                                 62     11  
+    169  KEYWORD           'print'                              62     14  
+    170  LPAREN            '('                                  62     19  
+    171  STRING_LIT        '"Warning: low memory"'              62     20  'Warning: low memory'
+    172  RPAREN            ')'                                  62     41  
+    173  SEMICOLON         ';'                                  62     42  
+    174  INTEGER_LIT       '2'                                  63      9  2
+    175  MATCH_ARROW       '=>'                                 63     11  
+    176  KEYWORD           'print'                              63     14  
+    177  LPAREN            '('                                  63     19  
+    178  STRING_LIT        '"Error: disk full"'                 63     20  'Error: disk full'
+    179  RPAREN            ')'                                  63     38  
+    180  SEMICOLON         ';'                                  63     39  
+    181  INTEGER_LIT       '3'                                  64      9  3
+    182  RANGE_OP          '..'                                 64     10  
+    183  INTEGER_LIT       '9'                                  64     12  9
+    184  MATCH_ARROW       '=>'                                 64     14  
+    185  KEYWORD           'print'                              64     17  
+    186  LPAREN            '('                                  64     22  
+    187  STRING_LIT        '"Unknown error code"'               64     23  'Unknown error code'
+    188  RPAREN            ')'                                  64     43  
+    189  SEMICOLON         ';'                                  64     44  
+    190  IDENTIFIER        'code'                               65      9  
+    191  REL_OP            '>'                                  65     14  
+    192  INTEGER_LIT       '9'                                  65     16  9
+    193  MATCH_ARROW       '=>'                                 65     18  
+    194  KEYWORD           'print'                              65     21  
+    195  LPAREN            '('                                  65     26  
+    196  STRING_LIT        '"Very high error code"'             65     27  'Very high error code'
+    197  RPAREN            ')'                                  65     49  
+    198  SEMICOLON         ';'                                  65     50  
+    199  UNDERSCORE        '_'                                  66      9  
+    200  MATCH_ARROW       '=>'                                 66     11  
+    201  KEYWORD           'print'                              66     14  
+    202  LPAREN            '('                                  66     19  
+    203  STRING_LIT        '"Unrecognized code"'                66     20  'Unrecognized code'
+    204  RPAREN            ')'                                  66     39  
+    205  SEMICOLON         ';'                                  66     40  
+    206  RBRACE            '}'                                  67      5  
+    207  RBRACE            '}'                                  68      1  
+    208  KEYWORD           'void'                               70      1  
+    209  IDENTIFIER        'main'                               70      6  
+    210  LPAREN            '('                                  70     10  
+    211  RPAREN            ')'                                  70     11  
+    212  LBRACE            '{'                                  70     13  
+    213  KEYWORD           'var'                                71      5  
+    214  KEYWORD           'struct'                             71      9  
+    215  IDENTIFIER        'Student'                            71     16  
+    216  IDENTIFIER        's1'                                 71     24  
+    217  SEMICOLON         ';'                                  71     26  
+    218  KEYWORD           'var'                                72      5  
+    219  KEYWORD           'string'                             72      9  
+    220  IDENTIFIER        'info'                               72     16  
+    221  COMMA             ','                                  72     20  
+    222  IDENTIFIER        'grade'                              72     22  
+    223  COMMA             ','                                  72     27  
+    224  IDENTIFIER        'msg'                                72     29  
+    225  COMMA             ','                                  72     32  
+    226  IDENTIFIER        'severity'                           72     34  
+    227  SEMICOLON         ';'                                  72     42  
+    228  KEYWORD           'var'                                73      5  
+    229  KEYWORD           'int'                                73      9  
+    230  IDENTIFIER        'status'                             73     13  
+    231  SEMICOLON         ';'                                  73     19  
+    232  KEYWORD           'var'                                74      5  
+    233  KEYWORD           'char'                               74      9  
+    234  IDENTIFIER        'newline'                            74     14  
+    235  COMMA             ','                                  74     21  
+    236  IDENTIFIER        'tab'                                74     23  
+    237  COMMA             ','                                  74     26  
+    238  IDENTIFIER        'quote'                              74     28  
+    239  SEMICOLON         ';'                                  74     33  
+    240  KEYWORD           'var'                                75      5  
+    241  KEYWORD           'bool'                               75      9  
+    242  IDENTIFIER        'p'                                  75     14  
+    243  COMMA             ','                                  75     15  
+    244  IDENTIFIER        'q'                                  75     17  
+    245  SEMICOLON         ';'                                  75     18  
+    246  IDENTIFIER        's1'                                 78      5  
+    247  DOT               '.'                                  78      7  
+    248  IDENTIFIER        'name'                               78      8  
+    249  ASSIGN_OP         '='                                  78     13  
+    250  STRING_LIT        '"Alonzo"'                           78     15  'Alonzo'
+    251  SEMICOLON         ';'                                  78     23  
+    252  IDENTIFIER        's1'                                 79      5  
+    253  DOT               '.'                                  79      7  
+    254  IDENTIFIER        'id'                                 79      8  
+    255  ASSIGN_OP         '='                                  79     11  
+    256  INTEGER_LIT       '20220001'                           79     13  20220001
+    257  SEMICOLON         ';'                                  79     21  
+    258  IDENTIFIER        's1'                                 80      5  
+    259  DOT               '.'                                  80      7  
+    260  IDENTIFIER        'gpa'                                80      8  
+    261  ASSIGN_OP         '='                                  80     12  
+    262  FLOAT_LIT         '3.75'                               80     14  3.75
+    263  SEMICOLON         ';'                                  80     18  
+    264  IDENTIFIER        's1'                                 81      5  
+    265  DOT               '.'                                  81      7  
+    266  IDENTIFIER        'enrolled'                           81      8  
+    267  ASSIGN_OP         '='                                  81     17  
+    268  BOOL_LIT          'true'                               81     19  True
+    269  SEMICOLON         ';'                                  81     23  
+    270  IDENTIFIER        'info'                               84      5  
+    271  ASSIGN_OP         '='                                  84     10  
+    272  INTERP_STRING     '`Student: {s1.name}  ID: {s1.id}  GPA: {s1.gpa}`'     84     12  'Student: {s1.name}  ID: {s1.id}  GPA: {s1.gpa}'
+    273  SEMICOLON         ';'                                  84     60  
+    274  KEYWORD           'print'                              85      5  
+    275  LPAREN            '('                                  85     10  
+    276  IDENTIFIER        'info'                               85     11  
+    277  RPAREN            ')'                                  85     15  
+    278  SEMICOLON         ';'                                  85     16  
+    279  KEYWORD           'print'                              86      5  
+    280  LPAREN            '('                                  86     10  
+    281  STRING_LIT        '"Enrolled:"'                        86     11  'Enrolled:'
+    282  COMMA             ','                                  86     22  
+    283  IDENTIFIER        's1'                                 86     24  
+    284  DOT               '.'                                  86     26  
+    285  IDENTIFIER        'enrolled'                           86     27  
+    286  RPAREN            ')'                                  86     35  
+    287  SEMICOLON         ';'                                  86     36  
+    288  IDENTIFIER        'grade'                              89      5  
+    289  ASSIGN_OP         '='                                  89     11  
+    290  IDENTIFIER        'grade_letter'                       89     13  
+    291  LPAREN            '('                                  89     25  
+    292  IDENTIFIER        's1'                                 89     26  
+    293  DOT               '.'                                  89     28  
+    294  IDENTIFIER        'gpa'                                89     29  
+    295  RPAREN            ')'                                  89     32  
+    296  SEMICOLON         ';'                                  89     33  
+    297  KEYWORD           'print'                              90      5  
+    298  LPAREN            '('                                  90     10  
+    299  STRING_LIT        '"Letter grade:"'                    90     11  'Letter grade:'
+    300  COMMA             ','                                  90     26  
+    301  IDENTIFIER        'grade'                              90     28  
+    302  RPAREN            ')'                                  90     33  
+    303  SEMICOLON         ';'                                  90     34  
+    304  IDENTIFIER        's1'                                 93      5  
+    305  DOT               '.'                                  93      7  
+    306  IDENTIFIER        'name'                               93      8  
+    307  ASSIGN_OP         '='                                  93     13  
+    308  STRING_LIT        '"Updated"'                          93     15  'Updated'
+    309  SEMICOLON         ';'                                  93     24  
+    310  KEYWORD           'print'                              94      5  
+    311  LPAREN            '('                                  94     10  
+    312  STRING_LIT        '"Via member .name:"'                94     11  'Via member .name:'
+    313  COMMA             ','                                  94     30  
+    314  IDENTIFIER        's1'                                 94     32  
+    315  DOT               '.'                                  94     34  
+    316  IDENTIFIER        'name'                               94     35  
+    317  COMMA             ','                                  94     39  
+    318  STRING_LIT        '"GPA:"'                             94     41  'GPA:'
+    319  COMMA             ','                                  94     47  
+    320  IDENTIFIER        's1'                                 94     49  
+    321  DOT               '.'                                  94     51  
+    322  IDENTIFIER        'gpa'                                94     52  
+    323  RPAREN            ')'                                  94     55  
+    324  SEMICOLON         ';'                                  94     56  
+    325  IDENTIFIER        'status'                             97      5  
+    326  ASSIGN_OP         '='                                  97     12  
+    327  INTEGER_LIT       '2'                                  97     14  2
+    328  SEMICOLON         ';'                                  97     15  
+    329  IDENTIFIER        'handle_status'                      98      5  
+    330  LPAREN            '('                                  98     18  
+    331  IDENTIFIER        'status'                             98     19  
+    332  RPAREN            ')'                                  98     25  
+    333  SEMICOLON         ';'                                  98     26  
+    334  IDENTIFIER        'severity'                          101      5  
+    335  ASSIGN_OP         '='                                 101     14  
+    336  KEYWORD           'match'                             101     16  
+    337  LPAREN            '('                                 101     22  
+    338  IDENTIFIER        'status'                            101     23  
+    339  RPAREN            ')'                                 101     29  
+    340  LBRACE            '{'                                 101     31  
+    341  INTEGER_LIT       '0'                                 102      9  0
+    342  MATCH_ARROW       '=>'                                102     11  
+    343  STRING_LIT        '"low"'                             102     14  'low'
+    344  COMMA             ','                                 102     19  
+    345  INTEGER_LIT       '1'                                 103      9  1
+    346  MATCH_ARROW       '=>'                                103     11  
+    347  STRING_LIT        '"medium"'                          103     14  'medium'
+    348  COMMA             ','                                 103     22  
+    349  UNDERSCORE        '_'                                 104      9  
+    350  MATCH_ARROW       '=>'                                104     11  
+    351  STRING_LIT        '"high"'                            104     14  'high'
+    352  RBRACE            '}'                                 105      5  
+    353  SEMICOLON         ';'                                 105      6  
+    354  KEYWORD           'print'                             106      5  
+    355  LPAREN            '('                                 106     10  
+    356  STRING_LIT        '"Severity:"'                       106     11  'Severity:'
+    357  COMMA             ','                                 106     22  
+    358  IDENTIFIER        'severity'                          106     24  
+    359  RPAREN            ')'                                 106     32  
+    360  SEMICOLON         ';'                                 106     33  
+    361  KEYWORD           'match'                             109      5  
+    362  LPAREN            '('                                 109     11  
+    363  IDENTIFIER        'p'                                 109     12  
+    364  RPAREN            ')'                                 109     13  
+    365  LBRACE            '{'                                 109     15  
+    366  BOOL_LIT          'true'                              110      9  True
+    367  MATCH_ARROW       '=>'                                110     14  
+    368  KEYWORD           'print'                             110     17  
+    369  LPAREN            '('                                 110     22  
+    370  STRING_LIT        '"p is true"'                       110     23  'p is true'
+    371  RPAREN            ')'                                 110     34  
+    372  SEMICOLON         ';'                                 110     35  
+    373  BOOL_LIT          'false'                             111      9  False
+    374  MATCH_ARROW       '=>'                                111     15  
+    375  KEYWORD           'print'                             111     18  
+    376  LPAREN            '('                                 111     23  
+    377  STRING_LIT        '"p is false"'                      111     24  'p is false'
+    378  RPAREN            ')'                                 111     36  
+    379  SEMICOLON         ';'                                 111     37  
+    380  RBRACE            '}'                                 112      5  
+    381  KEYWORD           'try'                               115      5  
+    382  LBRACE            '{'                                 115      9  
+    383  IDENTIFIER        'validate_id'                       116      9  
+    384  LPAREN            '('                                 116     20  
+    385  INTEGER_LIT       '20220001'                          116     21  20220001
+    386  RPAREN            ')'                                 116     29  
+    387  SEMICOLON         ';'                                 116     30  
+    388  IDENTIFIER        'validate_id'                       117      9  
+    389  LPAREN            '('                                 117     20  
+    390  ARITH_OP          '-'                                 117     21  
+    391  INTEGER_LIT       '5'                                 117     22  5
+    392  RPAREN            ')'                                 117     23  
+    393  SEMICOLON         ';'                                 117     24  
+    394  RBRACE            '}'                                 118      5  
+    395  KEYWORD           'catch'                             118      7  
+    396  LPAREN            '('                                 118     13  
+    397  IDENTIFIER        'e'                                 118     14  
+    398  RPAREN            ')'                                 118     15  
+    399  LBRACE            '{'                                 118     17  
+    400  KEYWORD           'print'                             119      9  
+    401  LPAREN            '('                                 119     14  
+    402  STRING_LIT        '"Caught exception:"'               119     15  'Caught exception:'
+    403  COMMA             ','                                 119     34  
+    404  IDENTIFIER        'e'                                 119     36  
+    405  RPAREN            ')'                                 119     37  
+    406  SEMICOLON         ';'                                 119     38  
+    407  RBRACE            '}'                                 120      5  
+    408  KEYWORD           'catch'                             120      7  
+    409  LPAREN            '('                                 120     13  
+    410  IDENTIFIER        'err'                               120     14  
+    411  RPAREN            ')'                                 120     17  
+    412  LBRACE            '{'                                 120     19  
+    413  KEYWORD           'print'                             121      9  
+    414  LPAREN            '('                                 121     14  
+    415  STRING_LIT        '"Second handler:"'                 121     15  'Second handler:'
+    416  COMMA             ','                                 121     32  
+    417  IDENTIFIER        'err'                               121     34  
+    418  RPAREN            ')'                                 121     37  
+    419  SEMICOLON         ';'                                 121     38  
+    420  RBRACE            '}'                                 122      5  
+    421  KEYWORD           'finally'                           122      7  
+    422  LBRACE            '{'                                 122     15  
+    423  KEYWORD           'print'                             123      9  
+    424  LPAREN            '('                                 123     14  
+    425  STRING_LIT        '"Validation routine complete."'    123     15  'Validation routine complete.'
+    426  RPAREN            ')'                                 123     45  
+    427  SEMICOLON         ';'                                 123     46  
+    428  RBRACE            '}'                                 124      5  
+    429  KEYWORD           'try'                               127      5  
+    430  LBRACE            '{'                                 127      9  
+    431  IDENTIFIER        'validate_id'                       128      9  
+    432  LPAREN            '('                                 128     20  
+    433  INTEGER_LIT       '99999'                             128     21  99999
+    434  RPAREN            ')'                                 128     26  
+    435  SEMICOLON         ';'                                 128     27  
+    436  RBRACE            '}'                                 129      5  
+    437  KEYWORD           'catch'                             129      7  
+    438  LPAREN            '('                                 129     13  
+    439  IDENTIFIER        'ex'                                129     14  
+    440  RPAREN            ')'                                 129     16  
+    441  LBRACE            '{'                                 129     18  
+    442  KEYWORD           'print'                             130      9  
+    443  LPAREN            '('                                 130     14  
+    444  STRING_LIT        '"Validation passed or caught:"'    130     15  'Validation passed or caught:'
+    445  COMMA             ','                                 130     45  
+    446  IDENTIFIER        'ex'                                130     47  
+    447  RPAREN            ')'                                 130     49  
+    448  SEMICOLON         ';'                                 130     50  
+    449  RBRACE            '}'                                 131      5  
+    450  IDENTIFIER        'newline'                           134      5  
+    451  ASSIGN_OP         '='                                 134     13  
+    452  CHAR_LIT          "'\n'"                              134     15  '\n'
+    453  SEMICOLON         ';'                                 134     19  
+    454  IDENTIFIER        'tab'                               135      5  
+    455  ASSIGN_OP         '='                                 135      9  
+    456  CHAR_LIT          "'\t'"                              135     11  '\t'
+    457  SEMICOLON         ';'                                 135     15  
+    458  IDENTIFIER        'quote'                             136      5  
+    459  ASSIGN_OP         '='                                 136     11  
+    460  CHAR_LIT          '\'"\''                             136     13  '"'
+    461  SEMICOLON         ';'                                 136     17  
+    462  KEYWORD           'print'                             137      5  
+    463  LPAREN            '('                                 137     10  
+    464  STRING_LIT        '"Special chars stored:"'           137     11  'Special chars stored:'
+    465  COMMA             ','                                 137     34  
+    466  IDENTIFIER        'newline'                           137     36  
+    467  COMMA             ','                                 137     43  
+    468  IDENTIFIER        'tab'                               137     45  
+    469  COMMA             ','                                 137     48  
+    470  IDENTIFIER        'quote'                             137     50  
+    471  RPAREN            ')'                                 137     55  
+    472  SEMICOLON         ';'                                 137     56  
+    473  IDENTIFIER        'msg'                               140      5  
+    474  ASSIGN_OP         '='                                 140      9  
+    475  STRING_LIT        '"Line1\nLine2\tTabbed\\Backslash"'    140     11  'Line1\nLine2\tTabbed\\Backslash'
+    476  SEMICOLON         ';'                                 140     44  
+    477  KEYWORD           'print'                             141      5  
+    478  LPAREN            '('                                 141     10  
+    479  IDENTIFIER        'msg'                               141     11  
+    480  RPAREN            ')'                                 141     14  
+    481  SEMICOLON         ';'                                 141     15  
+    482  IDENTIFIER        'p'                                 144      5  
+    483  ASSIGN_OP         '='                                 144      7  
+    484  BOOL_LIT          'true'                              144      9  True
+    485  SEMICOLON         ';'                                 144     13  
+    486  IDENTIFIER        'q'                                 145      5  
+    487  ASSIGN_OP         '='                                 145      7  
+    488  BOOL_LIT          'false'                             145      9  False
+    489  SEMICOLON         ';'                                 145     14  
+    490  KEYWORD           'if'                                146      5  
+    491  LPAREN            '('                                 146      8  
+    492  IDENTIFIER        'p'                                 146      9  
+    493  LOGIC_OP          '&&'                                146     11  
+    494  LOGIC_OP          '!'                                 146     14  
+    495  IDENTIFIER        'q'                                 146     15  
+    496  RPAREN            ')'                                 146     16  
+    497  LBRACE            '{'                                 146     18  
+    498  KEYWORD           'print'                             147      9  
+    499  LPAREN            '('                                 147     14  
+    500  STRING_LIT        '"p is true and q is false"'        147     15  'p is true and q is false'
+    501  RPAREN            ')'                                 147     41  
+    502  SEMICOLON         ';'                                 147     42  
+    503  RBRACE            '}'                                 148      5  
+    504  KEYWORD           'if'                                149      5  
+    505  LPAREN            '('                                 149      8  
+    506  IDENTIFIER        'p'                                 149      9  
+    507  LOGIC_OP          '||'                                149     11  
+    508  IDENTIFIER        'q'                                 149     14  
+    509  RPAREN            ')'                                 149     15  
+    510  LBRACE            '{'                                 149     17  
+    511  KEYWORD           'print'                             150      9  
+    512  LPAREN            '('                                 150     14  
+    513  STRING_LIT        '"At least one is true"'            150     15  'At least one is true'
+    514  RPAREN            ')'                                 150     37  
+    515  SEMICOLON         ';'                                 150     38  
+    516  RBRACE            '}'                                 151      5  
+    517  RBRACE            '}'                                 152      1  
+    518  EOF               ''                                  153      1  
+
+========================================================================
+  STATISTICS
+========================================================================
+
+  Total tokens  : 517
+  Total errors  : 0
+  Scan time     : 0.967 ms
+  Source lines  : 153
+  Source chars  : 4014
+
+  Token type breakdown:
+    IDENTIFIER            96
+    KEYWORD               80
+    SEMICOLON             64
+    LPAREN                44
+    RPAREN                44
+    STRING_LIT            34
+    LBRACE                27
+    RBRACE                27
+    COMMA                 22
+    INTEGER_LIT           15
+    ASSIGN_OP             15
+    MATCH_ARROW           11
+    DOT                   9
+    REL_OP                7
+    FLOAT_LIT             5
+    BOOL_LIT              5
+    LOGIC_OP              4
+    CHAR_LIT              3
+    UNDERSCORE            2
+    RANGE_OP              1
+    INTERP_STRING         1
+    ARITH_OP              1
