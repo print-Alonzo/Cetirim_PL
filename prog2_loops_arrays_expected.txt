@@ -1,0 +1,33 @@
+Sum: 412   Average: 82.0
+Scores via range loop:
+  scores[ 0 ] = 95
+  scores[ 1 ] = 82
+  scores[ 2 ] = 77
+  scores[ 3 ] = 90
+  scores[ 4 ] = 68
+Scores via collection loop:
+  95
+  82
+  77
+  90
+  68
+Sorted scores:
+68
+77
+82
+90
+95
+Enter a positive number:
+You entered: 7
+Even numbers from 0 to 20 (skip multiples of 6):
+2
+4
+8
+10
+14
+16
+prime: 2
+prime: 3
+prime: 5
+prime: 7
+Doubled primes: 4 6 10 14
