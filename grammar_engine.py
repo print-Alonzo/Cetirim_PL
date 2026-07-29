@@ -21,8 +21,20 @@ parser's `expect()`), so structurally-required delimiters (`;`, `)`, `}`)
 don't abort the whole rule over one missing token.
 """
 
-from ast_nodes import ParseError
+from ast_nodes import Node, ParseError
 from scanner import TT
+
+
+def _stamp_position(result, token):
+    """If `result` is a Node with no position yet, stamp it from `token`.
+
+    Called from Ref.run/Rule.run so every grammar-produced Node picks up the
+    position of the first token it consumed, without grammar.py having to do
+    it manually for each action.
+    """
+    if isinstance(result, Node) and result.line is None:
+        result.line = token.line
+        result.col = token.col
 
 
 SYNC_KEYWORDS = {
@@ -161,7 +173,10 @@ class Rule:
         self.fn = fn
 
     def run(self, ps, committed):
-        return self.fn(ps, committed)
+        start_pos = ps.pos
+        result = self.fn(ps, committed)
+        _stamp_position(result, ps.tokens[start_pos] if start_pos < len(ps.tokens) else ps.tokens[-1])
+        return result
 
 
 class Bind:
@@ -310,6 +325,7 @@ class Ref:
 
     def run(self, ps, committed):
         rule = ps.grammar[self.name]
+        start_pos = ps.pos
         key = (self.name, ps.pos)
         cached = ps._memo.get(key)
         if cached is not None:
@@ -324,6 +340,7 @@ class Ref:
                 ps.error(self.fail_msg or f"Expected {self.name}")
                 raise HardFail()
             raise
+        _stamp_position(result, ps.tokens[start_pos] if start_pos < len(ps.tokens) else ps.tokens[-1])
         if len(ps.errors) == start_errors:
             ps._memo[key] = (ps.pos, result)
         return result

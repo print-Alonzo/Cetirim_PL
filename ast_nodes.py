@@ -21,6 +21,8 @@ class ParseError:
 class Node:
     kind: str
     fields: Dict[str, Any] = field(default_factory=dict)
+    line: int = None
+    col: int = None
 
     def to_dict(self):
         return {"kind": self.kind, **{k: to_jsonable(v) for k, v in self.fields.items()}}

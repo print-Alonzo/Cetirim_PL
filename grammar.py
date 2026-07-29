@@ -12,10 +12,10 @@ comments for traceability.
 """
 
 from ast_nodes import Node, merge_type
-from scanner import TT
+from scanner import TT, Scanner
 from grammar_engine import (
     Term, Kw, Seq, Alt, Star, Plus, Opt, Ref, And, Not, Bind, Cut, Emit,
-    Abort, Rule, Fail, HardFail, chainl, comma_list, many_rec,
+    Abort, Rule, Fail, HardFail, ParseState, chainl, comma_list, many_rec,
 )
 
 
@@ -491,8 +491,85 @@ def _postfix_fn(ps, committed):
 GRAMMAR["postfix"] = Rule(_postfix_fn)
 
 _PRIMARY_LITERAL_TYPES = {
-    TT.INTEGER_LIT, TT.FLOAT_LIT, TT.STRING_LIT, TT.CHAR_LIT, TT.INTERP_STRING, TT.BOOL_LIT,
+    TT.INTEGER_LIT, TT.FLOAT_LIT, TT.STRING_LIT, TT.CHAR_LIT, TT.BOOL_LIT,
 }
+
+
+# ---------------------------------------------------------------------------
+# Interpolated strings  (`text {expr} more text`)
+#
+# The scanner hands us the fully escape-resolved string in tok.attr. We split
+# it on unescaped { ... } runs, re-scan+re-parse each embedded expression
+# with the same Scanner/GRAMMAR machinery used for the whole file, and lower
+# the literal runs into ordinary Literal nodes. Known limitation: because the
+# scanner already resolved escapes before we ever see the string, `\{` cannot
+# be used to escape a literal brace (see README).
+# ---------------------------------------------------------------------------
+
+def _split_interp_parts(text, ps, tok):
+    parts = []
+    buf = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "{":
+            if buf:
+                parts.append(("lit", "".join(buf)))
+                buf = []
+            j = i + 1
+            depth = 1
+            expr_chars = []
+            while j < n and depth > 0:
+                if text[j] == "{":
+                    depth += 1
+                elif text[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                expr_chars.append(text[j])
+                j += 1
+            if depth != 0:
+                ps.error(f"Unterminated interpolation '{{' in string {tok.lexeme}")
+                return parts
+            parts.append(("expr", "".join(expr_chars)))
+            i = j + 1
+        else:
+            buf.append(ch)
+            i += 1
+    if buf:
+        parts.append(("lit", "".join(buf)))
+    return parts
+
+
+def _parse_embedded_expr(text, ps, tok):
+    if not text.strip():
+        ps.error(f"Empty interpolation '{{}}' in string {tok.lexeme}")
+        return Node("Literal", {"token_type": TT.STRING_LIT, "lexeme": "", "value": ""})
+
+    sub_tokens, lex_errors = Scanner(text).scan_all()
+    if lex_errors:
+        ps.error(f"Invalid interpolated expression {{{text}}} in string {tok.lexeme}: {lex_errors[0].message}")
+        return Node("Literal", {"token_type": TT.STRING_LIT, "lexeme": "", "value": ""})
+
+    sub_ps = ParseState(sub_tokens, GRAMMAR)
+    try:
+        expr_node = GRAMMAR["expression"].run(sub_ps, True)
+    except HardFail:
+        expr_node = None
+    if expr_node is None or sub_ps.errors or not sub_ps.at_end():
+        ps.error(f"Invalid interpolated expression {{{text}}} in string {tok.lexeme}")
+        return Node("Literal", {"token_type": TT.STRING_LIT, "lexeme": "", "value": ""})
+    return expr_node
+
+
+def _build_interp_string_node(ps, tok):
+    parts = []
+    for kind, text in _split_interp_parts(tok.attr, ps, tok):
+        if kind == "lit":
+            parts.append(Node("Literal", {"token_type": TT.STRING_LIT, "lexeme": text, "value": text}))
+        else:
+            parts.append(_parse_embedded_expr(text, ps, tok))
+    return Node("InterpString", {"parts": parts})
 
 
 def _primary_fn(ps, committed):
@@ -501,6 +578,10 @@ def _primary_fn(ps, committed):
     if tok.ttype == TT.ERROR:
         ps.pos += 1  # consume so parsing advances past the bad token
         raise HardFail()  # lex error already recorded by the scanner
+
+    if tok.ttype == TT.INTERP_STRING:
+        ps.pos += 1
+        return _build_interp_string_node(ps, tok)
 
     if tok.ttype in _PRIMARY_LITERAL_TYPES:
         ps.pos += 1
