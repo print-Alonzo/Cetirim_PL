@@ -1,5 +1,11 @@
 """Stack-machine VM that executes the quadruples produced by ir.py.
 
+Phase handoff: this is the last phase in the pipeline. It receives
+`(quads, functions, var_types, structs)` from `ir.py`'s `generate()` and
+just runs them - there is no further lowering after this. `main()` below
+wires the whole pipeline together for the `python interpreter.py <file>`
+CLI: scan -> parse -> analyze -> generate -> execute.
+
 Frame model: every active call gets its own dict keyed by ir_name (the
 globally-unique names semantics.py assigned - "main.i", "main.i$2" on
 shadowing, temps as "_t7"), plus a single shared `self.globals` dict for
@@ -11,11 +17,11 @@ is active, which is what let the old flat-frame VM confuse a local with a
 same-named global.
 
 Exceptions: `TRY_PUSH` records `(handler_pc, frame, call_stack_depth)`.
-`THROW`/`RETHROW` unwind `call_stack` back to that depth and resume at
-`handler_pc` in the recorded `frame`. There's no separate runtime notion of
-"finally" - ir.py's gen_try already compiled two copies of the finally body
-(one inline after a normal catch, one before RETHROW), so the VM only ever
-needs to know "where's the nearest still-registered handler".
+`THROW`/`RETHROW` unwind `call_stack` back to that depth and resume in the
+recorded frame. There's no separate runtime notion of "finally" - ir.py's
+gen_try already compiled two copies of the finally body (one inline after a
+normal catch, one before RETHROW), so the VM only ever needs to know
+"where's the nearest still-registered handler".
 
 Arrays are plain Python lists and structs are dict-like StructValues, both
 stored directly as the value in a frame slot - passing one to a function or
@@ -36,6 +42,11 @@ DEFAULTS = {"int": 0, "float": 0.0, "bool": False, "string": "", "char": "\0"}
 
 
 class RuntimeVMError(Exception):
+    """A malformed-at-runtime condition (division by zero, an
+    out-of-bounds array index, a bad `input()` parse, ...) that gets
+    reported as a clean `[RUNTIME ERROR]` line instead of a raw Python
+    traceback. Carries the source `line` it happened on, when known."""
+
     def __init__(self, message, line=None):
         super().__init__(message)
         self.message = message
@@ -46,6 +57,11 @@ class RuntimeVMError(Exception):
 
 
 class UncaughtException(Exception):
+    """A `throw`n value that reached `_unwind` with no `TRY_PUSH`-registered
+    handler left to catch it - i.e. it propagated all the way out of
+    `main`. Reported the same way as `RuntimeVMError`, just with a
+    different message shape."""
+
     def __init__(self, value, line=None):
         super().__init__(str(value))
         self.value = value
@@ -75,6 +91,9 @@ def _numeric(value):
 
 
 def _div(a, b):
+    """DIV handler: `int / int` truncates toward zero (C-style), matching
+    the language design decision in CLAUDE.md. Contrast with `MOD` right
+    below, which is deliberately *not* given this same treatment."""
     # C-style truncating division: int/int -> int, truncated toward zero.
     return a / b if isinstance(a, float) or isinstance(b, float) else int(a / b)
 
@@ -85,6 +104,10 @@ BINARY_OPS = {
     "LE": operator.le, "GE": operator.ge,
 }
 ARITH_OPCODES = {"ADD", "SUB", "MUL", "DIV", "MOD"}
+# Note MOD is plain Python `%` here (floor-based, sign follows the divisor),
+# NOT given the same C-style truncation _div gives DIV - a deliberate,
+# accepted inconsistency for negative operands (see LIMITATIONS.md); it only
+# matters for negative operands, which none of the sample programs exercise.
 NUMERIC_PROMOTE_OPCODES = ARITH_OPCODES | {"LT", "GT", "LE", "GE", "EQ", "NE"}
 UNARY_OPS = {"UMINUS": operator.neg, "UPLUS": lambda v: v, "NOT": operator.not_}
 
@@ -96,15 +119,28 @@ _NATIVE_RUNTIME_ERRORS = (ZeroDivisionError, IndexError, KeyError, ValueError, T
 
 
 class IRExecutor:
+    """Executes one `(quads, functions, var_types, structs)` program to
+    completion (or until a runtime error/uncaught exception aborts it)."""
+
     def __init__(self, quads, functions, var_types, structs, trace=False):
         self.quads = quads
         self.functions = functions
         self.var_types = var_types
         self.structs = structs
         self.trace = trace
+        # Every LABEL's quad index is resolved exactly once, up front, so
+        # JMP/JZ/JNZ during execution are an O(1) dict lookup rather than a
+        # linear scan for the matching label each time a jump happens.
         self.labels = {q.result: i for i, q in enumerate(quads) if q.op == "LABEL"}
 
     def run(self):
+        """Initialize all VM state and execute quads from `pc = 0` until
+        `pc` runs off the end (via `HALT` or falling out of `main`).
+        `_NATIVE_RUNTIME_ERRORS` are caught exactly once here, at the
+        outermost loop, and re-raised as a `RuntimeVMError` carrying the
+        currently-executing quad's source line - this is the only place a
+        raw Python exception from a malformed program gets translated into
+        the clean `[RUNTIME ERROR]` reporting `main()` prints."""
         self.globals = {}
         self.call_stack = []  # (return_pc, result_temp, caller_frame)
         self.exception_handlers = []  # (handler_pc, frame, call_stack_depth)
@@ -127,8 +163,13 @@ class IRExecutor:
     # -- dispatch ------------------------------------------------------------
 
     def _exec(self, q):
+        """Execute exactly one quad and advance `self.pc` (every branch is
+        responsible for its own `pc` update - most fall through to `pc += 1`,
+        but jumps/calls/returns retarget `pc` directly instead). Grouped by
+        opcode family below, matching ir.py's module docstring's grouping."""
         op = q.op
 
+        # -- control flow / misc --
         if op in ("LABEL", "FUNC_BEGIN", "FUNC_END", "NOP"):
             self.pc += 1
         elif op == "JMP":
@@ -137,12 +178,16 @@ class IRExecutor:
             self.pc = self.labels[q.result] if not self.resolve(q.arg1) else self.pc + 1
         elif op == "JNZ":
             self.pc = self.labels[q.result] if self.resolve(q.arg1) else self.pc + 1
+
+        # -- data movement --
         elif op == "ASSIGN":
             self.set_var(q.result, self.resolve(q.arg1))
             self.pc += 1
         elif op == "CAST":
             self.set_var(q.result, self._cast(self.resolve(q.arg1), q.arg2))
             self.pc += 1
+
+        # -- arithmetic / relational / logical --
         elif op in BINARY_OPS:
             left, right = self.resolve(q.arg1), self.resolve(q.arg2)
             if op in NUMERIC_PROMOTE_OPCODES:
@@ -155,6 +200,8 @@ class IRExecutor:
                 value = _numeric(value)
             self.set_var(q.result, UNARY_OPS[op](value))
             self.pc += 1
+
+        # -- functions --
         elif op == "PARAM":
             self.pending_args.append(self.resolve(q.arg1))
             self.pc += 1
@@ -162,6 +209,8 @@ class IRExecutor:
             self._call(q)
         elif op == "RETURN":
             self._do_return(q)
+
+        # -- tuples (multi-return / destructuring) --
         elif op == "TUPLE_NEW":
             self.set_var(q.result, [])
             self.pc += 1
@@ -173,16 +222,21 @@ class IRExecutor:
         elif op == "UNPACK":
             self._unpack(q)
             self.pc += 1
+
+        # -- arrays --
         elif op == "ARR_NEW":
             size = self.resolve(q.arg1)
             self.set_var(q.result, [DEFAULTS.get(q.arg2)] * size)
             self.pc += 1
         elif op == "ARR_LOAD":
+            # LOAD: (array, index) -> result.
             arr, idx = self.resolve(q.arg1), self.resolve(q.arg2)
             self._check_index(arr, idx)
             self.set_var(q.result, arr[idx])
             self.pc += 1
         elif op == "ARR_STORE":
+            # STORE: (index, value) -> array=result - operand order is
+            # swapped relative to ARR_LOAD, per ir.py's LOAD/STORE convention.
             idx, value = self.resolve(q.arg1), self.resolve(q.arg2)
             arr = self.resolve(q.result)
             self._check_index(arr, idx)
@@ -191,24 +245,32 @@ class IRExecutor:
         elif op == "ARR_LEN":
             self.set_var(q.result, len(self.resolve(q.arg1)))
             self.pc += 1
+
+        # -- structs --
         elif op == "STRUCT_NEW":
             fields = self.structs.get(q.arg1, {"fields": []})["fields"]
             self.set_var(q.result, StructValue(q.arg1, {fn: DEFAULTS.get(ft) for fn, ft in fields}))
             self.pc += 1
         elif op == "FIELD_LOAD":
+            # LOAD: (struct, field_name) -> result.
             obj = self.resolve(q.arg1)
             self.set_var(q.result, obj[self.resolve(q.arg2)])
             self.pc += 1
         elif op == "FIELD_STORE":
+            # STORE: (field_name, value) -> struct=result.
             field, value = self.resolve(q.arg1), self.resolve(q.arg2)
             self.resolve(q.result)[field] = value
             self.pc += 1
+
+        # -- strings --
         elif op == "CONCAT":
             self.set_var(q.result, self.resolve(q.arg1) + self.resolve(q.arg2))
             self.pc += 1
         elif op == "TOSTR":
             self.set_var(q.result, self._format(self.resolve(q.arg1)))
             self.pc += 1
+
+        # -- exceptions --
         elif op == "TRY_PUSH":
             self.exception_handlers.append((self.labels[q.arg1], self.frame, len(self.call_stack)))
             self.pc += 1
@@ -223,6 +285,8 @@ class IRExecutor:
         elif op == "CATCH_STORE":
             self.set_var(q.result, self.current_exception)
             self.pc += 1
+
+        # -- I/O --
         elif op == "PRINT":
             sys.stdout.write(self._format(self.resolve(q.arg1)))
             self.pc += 1
@@ -235,6 +299,8 @@ class IRExecutor:
         elif op == "INPUT":
             self._do_input(q)
             self.pc += 1
+
+        # -- misc --
         elif op == "HALT":
             self.pc = len(self.quads)
         else:
@@ -243,10 +309,18 @@ class IRExecutor:
     # -- storage ---------------------------------------------------------
 
     def _runtime_error(self, message):
+        """Raise a `RuntimeVMError` tagged with the currently-executing
+        quad's source line - the single helper every hand-checked runtime
+        error (array bounds, unpack arity, bad input) goes through."""
         line = self.quads[self.pc].line if self.pc < len(self.quads) else None
         raise RuntimeVMError(message, line)
 
     def resolve(self, operand):
+        """Read one quad operand's value: a `Const` unwraps to its literal
+        value; otherwise the name is looked up in the current frame first,
+        falling back to `self.globals`. This "check frame, then globals"
+        order - never the reverse - is what a local of the same name as a
+        global relies on to correctly shadow it."""
         if operand is None:
             return None
         if isinstance(operand, Const):
@@ -256,6 +330,14 @@ class IRExecutor:
         return self.globals[operand]
 
     def set_var(self, name, value):
+        """Write to one variable slot. The central trick of the whole VM:
+        because semantics.py already guaranteed every ir_name is unique
+        *program-wide* (see its `_fresh_ir_name`), "is this name currently a
+        key in `self.globals`?" is a completely unambiguous routing test -
+        there is no scope-nesting to walk, and no possibility that a local
+        write here could ever land in the globals dict instead (which is
+        exactly the bug an earlier flat-frame version of this VM had, per
+        the module docstring)."""
         if name in self.globals:
             self.globals[name] = value
         else:
@@ -264,6 +346,16 @@ class IRExecutor:
     # -- functions / control flow -----------------------------------------
 
     def _call(self, q):
+        """`CALL name argcount result_temp`: pop exactly `argcount` values
+        off the tail of `pending_args` (built up by the preceding `PARAM`
+        quads), push `(return_pc, result_temp, caller_frame)` onto
+        `call_stack` - this list *is* the call stack, a plain Python list
+        rather than a real recursive Python function call, which is why a
+        deeply-recursive source program doesn't blow Python's own stack
+        (see LIMITATIONS.md for the flip side: nothing caps it either) -
+        then build a brand-new frame dict from the callee's parameter names
+        zipped with the popped argument values, and jump to its entry
+        point."""
         name, argcount, result_temp = q.arg1, q.arg2, q.result
         args = self.pending_args[len(self.pending_args) - argcount:] if argcount else []
         if argcount:
@@ -274,6 +366,13 @@ class IRExecutor:
         self.pc = fn["entry"]
 
     def _do_return(self, q):
+        """`RETURN [value]`: with an empty `call_stack`, this is a return
+        from `main` itself - halt the whole program. Otherwise pop the
+        matching `(return_pc, result_temp, caller_frame)` entry `_call`
+        pushed, restore the caller's frame and resume at its saved
+        `return_pc`, and - if the call site actually wanted the result
+        (`result_temp is not None`) - write the returned value into that
+        slot in the now-restored caller frame."""
         value = self.resolve(q.arg1) if q.arg1 is not None else None
         if not self.call_stack:
             self.pc = len(self.quads)  # return from main -> halt
@@ -283,6 +382,11 @@ class IRExecutor:
             self.set_var(result_temp, value)
 
     def _unpack(self, q):
+        """`UNPACK tuple_value -> (name1, name2, ...)`: fan a Python list
+        (built by TUPLE_NEW/TUPLE_APPEND, or handed back from a multi-return
+        call) out into several named slots at once - a length mismatch is a
+        runtime error, not a silent truncate/pad, since semantics.py can't
+        always prove arity statically for every call shape."""
         values = self.resolve(q.arg1)
         names = q.result
         if len(values) != len(names):
@@ -291,6 +395,15 @@ class IRExecutor:
             self.set_var(name, v)
 
     def _unwind(self):
+        """Shared by `THROW` and `RETHROW`: pop the nearest still-registered
+        exception handler and jump straight to it, **truncating
+        `call_stack` back to the depth it had when that handler's
+        `TRY_PUSH` ran**. That truncation is what makes a `throw` several
+        function calls deep correctly unwind through all of them in one
+        step, rather than needing each intervening function to notice and
+        re-propagate the exception itself. With no handler left at all, the
+        exception has propagated out of `main` entirely - that's reported
+        as an `UncaughtException`, not silently swallowed."""
         if not self.exception_handlers:
             line = self.quads[self.pc].line if self.pc < len(self.quads) else None
             raise UncaughtException(self.current_exception, line)
@@ -300,6 +413,11 @@ class IRExecutor:
         self.frame = handler_frame
 
     def _check_index(self, arr, idx):
+        """Bounds-check before every array read/write - Python would
+        happily raise its own `IndexError` for a negative or too-large
+        index, but this gives a clearer, VM-native error message (still
+        ultimately reported the same way, since `_runtime_error` raises the
+        same `RuntimeVMError` any native exception gets translated into)."""
         if not (0 <= idx < len(arr)):
             self._runtime_error(f"Array index {idx} out of bounds (length {len(arr)})")
 
@@ -316,6 +434,13 @@ class IRExecutor:
         return value
 
     def _format(self, value):
+        """Render a runtime value as the text `print`/interpolated strings
+        show: the language's own `true`/`false` spelling for bools (Python's
+        `str(True)` would print `"True"`), `Name{field: value, ...}` for
+        structs, `{v, v, ...}` for arrays (recursively formatted, so nested
+        arrays/structs print correctly), and plain `str()` for everything
+        else (ints, floats, strings, and chars - which are just 1-character
+        Python strs, so they need no special case)."""
         if isinstance(value, bool):
             return "true" if value else "false"
         if isinstance(value, StructValue):
@@ -326,6 +451,12 @@ class IRExecutor:
         return str(value)
 
     def _next_input_token(self):
+        """Pull the next whitespace-separated token from stdin, reading a
+        fresh line whenever the buffer runs dry. This is what lets a
+        program like `repeat { input(n); } until (n > 0);` read across
+        multiple physical lines correctly - `input()` doesn't assume "one
+        call = one line", it just keeps consuming from one continuous
+        stream of whitespace-separated tokens."""
         while not self._input_buffer:
             raw = sys.stdin.readline()
             if raw == "":
@@ -334,11 +465,22 @@ class IRExecutor:
         return self._input_buffer.pop(0)
 
     def _do_input(self, q):
+        """`INPUT -> (name1, name2, ...)`: read one token per target name,
+        coercing each to that name's declared type (from `var_types`,
+        recorded by ir.py) before storing it."""
         for name in q.result:
             text = self._next_input_token()
             self.set_var(name, self._coerce(text, self.var_types.get(name, "string")))
 
     def _coerce(self, text, type_tag):
+        """Parse one whitespace-separated input token according to the
+        target variable's type tag. A `bool` accepts `"true"`/`"1"` (case-
+        insensitive) as true, anything else as false, rather than raising on
+        unrecognized text. A malformed `int`/`float` token is a clean
+        runtime error, not a raw Python traceback, hence the explicit
+        `try`/`except ValueError` here rather than letting it propagate to
+        the generic `_NATIVE_RUNTIME_ERRORS` catch in `run()` (which would
+        still work, just with a less specific message)."""
         try:
             if type_tag == "int":
                 return int(text)
@@ -354,6 +496,12 @@ class IRExecutor:
 
 
 def main():
+    """CLI entry point: `python interpreter.py <source_file> [--ir] [--symbols] [--trace]`.
+    Runs the complete pipeline - scan, parse, analyze, generate, execute -
+    exiting `2` if scanning/parsing/semantic analysis found any error
+    (nothing runs in that case) or `3` if execution itself fails
+    (`RuntimeVMError`/`UncaughtException`), matching the exit-code contract
+    described in `README.md`."""
     cli = argparse.ArgumentParser(description="CSC617M Custom Language Interpreter")
     cli.add_argument("source_file", help="Path to source file to run")
     cli.add_argument("--ir", action="store_true", help="Print the generated intermediate code (quadruples) before running")

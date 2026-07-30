@@ -3,16 +3,45 @@ IR-name assignment. Sits between the parser and the IR generator.
 
     analyze(program) -> (SymbolTable, [SemanticError])
 
+Phase handoff: receives the AST (`ast_nodes.Node` tree) built by
+`grammar.py`/`parser.py`. Produces a `SymbolTable` whose *side tables* (see
+"The side-table pattern" below) `ir.py` reads from directly - `ir.py` never
+re-resolves a name, re-infers a type, or re-checks a coercion; every fact it
+needs was already computed here, once, and looked up by `id(node)`.
+
 Two passes over the AST:
   Pass 1 (globals) - collects struct/typedef definitions (resolving alias
     chains with cycle detection), function signatures, and global `const`
-    declarations.
-  Pass 2 (bodies)  - walks each function with a scope stack, resolving every
-    name, checking every operator/call/assignment/control-flow construct,
-    and recording the result on side tables keyed by id(node) so the IR
-    generator (ir.py) never has to re-resolve anything.
+    declarations. Runs first, over *all* declarations, precisely so that
+    Pass 2 can freely resolve a forward reference - a function may call
+    another function declared later in the file, or use a struct/typedef
+    declared later - without needing multiple passes over function bodies.
+  Pass 2 (bodies)  - walks each function with a scope stack, resolving
+    every name, checking every operator/call/assignment/control-flow
+    construct, and recording the result on side tables keyed by id(node) so
+    the IR generator (ir.py) never has to re-resolve anything.
 
-Design notes (see the project plan for the full rationale):
+The side-table pattern: rather than mutating the AST (adding a `.type`
+attribute to nodes, say), every fact this pass learns about a node is
+stored in a dict on `SymbolTable` keyed by `id(node)` - the node's Python
+object identity. This keeps `ast_nodes.Node` itself completely generic (see
+its module docstring) and keeps "the AST" and "what we learned about the
+AST" as two separate, independently-inspectable things. The hazard: an
+`id(node)` key is only meaningful while that exact Node object is still
+alive and hasn't been replaced by an equal-looking new one - these tables
+are never meant to outlive the single `Program` tree they were built for.
+
+  node_symbol    - the resolved Symbol (or list of Symbols, for a LetDecl/
+                   MultiAssign that binds several names at once)
+  node_type      - the inferred type of an expression node
+  node_coerce    - "this expression's value needs an implicit CAST to this
+                   type before use" - the consumer is ir.py's
+                   `_gen_expr_coerced`
+  node_call      - the resolved FunctionSig for a CallExpr
+  node_call_args - a CallExpr's arguments, positionally reordered (named
+                   arguments get sorted back into parameter order here)
+
+Design notes (see also LIMITATIONS.md for the sharper edges of these):
   - `val`/`const` freeze the *binding*, not an array/struct's contents:
     only reassigning the name is rejected, element/field mutation is not.
   - Implicit numeric coercion: char -> int -> float. Everything else must
@@ -20,7 +49,10 @@ Design notes (see the project plan for the full rationale):
     IR generator can wrap that node's quad with CAST.
   - Every local symbol gets a globally-unique ir_name ("main.i", "main.i$2"
     on shadowing) so the VM can never confuse two same-named locals or a
-    local with a same-named global.
+    local with a same-named global. This is the single most important
+    cross-phase fact in the codebase: it's what lets interpreter.py's
+    `resolve`/`set_var` use one flat per-frame dict instead of a real
+    nested-scope lookup - see `_fresh_ir_name` below.
 """
 
 from dataclasses import dataclass, field
@@ -48,26 +80,43 @@ T_VOID = ("prim", "void")
 T_ERROR = ("error",)
 
 PRIMITIVE_TYPES = {"int", "float", "char", "string", "bool", "void"}
+# Numeric coercion ladder: char(0) -> int(1) -> float(2). A value may only
+# ever be implicitly widened to a *higher* rank (see can_coerce) - there is
+# no int->char or float->int implicit narrowing, and string/bool never
+# appear here at all.
 _NUMERIC_RANK = {T_CHAR: 0, T_INT: 1, T_FLOAT: 2}
 
 
 def t_struct(name):
+    """Build a `("struct", name)` type descriptor."""
     return ("struct", name)
 
 
 def t_array(elem, size=None):
+    """Build an `("array", element_type, size)` type descriptor. `size` is
+    `None` when the array's length isn't known at compile time (e.g. no
+    literal size and no initializer list to count)."""
     return ("array", elem, size)
 
 
 def t_tuple(elems):
+    """Build a `("tuple", (type, ...))` type descriptor for a multi-return
+    function's return type."""
     return ("tuple", tuple(elems))
 
 
 def is_error(t):
+    """True for the internal `T_ERROR` sentinel - a type that couldn't be
+    determined because an earlier error already occurred. Every type-lattice
+    function below treats `T_ERROR` as compatible with anything, so a single
+    root-cause error doesn't cascade into a wall of follow-on diagnostics
+    for every later use of the same malformed expression."""
     return t == T_ERROR
 
 
 def type_name(t):
+    """Render a type descriptor as the string used in diagnostic messages
+    (e.g. `"int[]"`, `"struct Point"`, `"(int, bool)"`)."""
     if t[0] == "prim":
         return t[1]
     if t[0] == "struct":
@@ -82,6 +131,10 @@ def type_name(t):
 
 
 def types_equal(a, b):
+    """Structural equality between two type descriptors. An array's *size*
+    is deliberately ignored (`int[5]` and `int[10]` are the same type for
+    compatibility purposes - only the element type matters), which is why
+    this can't just be Python `==` on the tuples."""
     if is_error(a) or is_error(b):
         return True
     if a[0] != b[0]:
@@ -94,6 +147,8 @@ def types_equal(a, b):
 
 
 def is_numeric(t):
+    """True for char/int/float - the three types the coercion ladder and
+    arithmetic operators apply to."""
     return t in _NUMERIC_RANK
 
 
@@ -105,6 +160,9 @@ def can_coerce(src, dst):
     if types_equal(src, dst):
         return True
     if is_numeric(src) and is_numeric(dst):
+        # Only upward along the ladder: char->int, char->float, int->float.
+        # int->char and float->int are NOT allowed here even though they're
+        # "numeric to numeric" - see _NUMERIC_RANK.
         return _NUMERIC_RANK[src] <= _NUMERIC_RANK[dst]
     return False
 
@@ -129,6 +187,9 @@ def unify(types):
         if types_equal(result, t):
             continue
         if is_numeric(result) and is_numeric(t):
+            # Two different numeric arms unify to whichever is "wider" -
+            # float wins over int/char, otherwise int (char is never the
+            # final unified type since char op non-char always promotes).
             result = T_FLOAT if T_FLOAT in (result, t) else T_INT
             continue
         return None
@@ -141,6 +202,11 @@ def unify(types):
 
 @dataclass
 class Symbol:
+    """One resolved name: its declared type, whether it can be reassigned
+    (`val`/`const` -> False), its globally-unique IR name (see
+    `_fresh_ir_name`), and whether it lives in `interpreter.py`'s
+    `self.globals` or the current call's `self.frame`."""
+
     name: str
     type: tuple
     mutable: bool
@@ -150,6 +216,11 @@ class Symbol:
 
 @dataclass
 class StructInfo:
+    """A resolved struct's field types, in declaration order (`field_order`
+    is what lets `ir.py`'s STRUCT_NEW default-initialize fields in a
+    deterministic order, and what a positional `{v1, v2, ...}` initializer
+    list is matched against)."""
+
     name: str
     fields: Dict[str, tuple] = field(default_factory=dict)
     field_order: List[str] = field(default_factory=list)
@@ -157,6 +228,10 @@ class StructInfo:
 
 @dataclass
 class FunctionSig:
+    """A resolved function signature - everything a call site needs to
+    type-check against, plus the original `FunctionDecl` Node (`node`) so
+    `ir.py` can find its body again when it's time to lower it."""
+
     name: str
     param_names: List[str]
     param_types: List[tuple]
@@ -166,6 +241,10 @@ class FunctionSig:
 
 @dataclass
 class SemanticError:
+    """One recorded semantic diagnostic: a message plus the AST position it
+    applies to (`line`/`col` are `None` only for whole-program errors with
+    no single node to blame, e.g. "no main function")."""
+
     message: str
     line: Optional[int]
     col: Optional[int]
@@ -176,6 +255,12 @@ class SemanticError:
 
 
 class SymbolTable:
+    """Everything Pass 1/Pass 2 produce: the resolved global tables
+    (structs, typedefs, functions, global symbols) plus the side tables
+    (see the module docstring's "side-table pattern" section) that let
+    `ir.py` read every per-node fact this analysis computed, keyed by
+    `id(node)`, without re-deriving any of it."""
+
     def __init__(self):
         self.structs: Dict[str, StructInfo] = {}
         self.typedefs: Dict[str, tuple] = {}
@@ -195,23 +280,33 @@ class SymbolTable:
 # ---------------------------------------------------------------------------
 
 class Analyzer:
+    """Drives the two passes described in the module docstring over one
+    `Program` node, accumulating results into `self.st` (a `SymbolTable`)
+    and diagnostics into `self.errors`."""
+
     def __init__(self):
         self.st = SymbolTable()
         self.errors: List[SemanticError] = []
-        self._raw_structs: Dict[str, Tuple[list, Node]] = {}
-        self._typedef_nodes: Dict[str, Node] = {}
-        self._typedef_resolving: set = set()
+        # Pass-1 scratch state, discarded once globals are fully resolved:
+        self._raw_structs: Dict[str, Tuple[list, Node]] = {}   # name -> (field Nodes, decl Node)
+        self._typedef_nodes: Dict[str, Node] = {}              # typedef name -> its aliased-type Node
+        self._typedef_resolving: set = set()                   # cycle-detection guard, see _resolve_typedef
+        # Pass-2 scratch state, reset per-function in _analyze_function:
         self._name_counters: Dict[str, int] = {}
         self._scopes: List[Dict[str, Symbol]] = []
         self._loop_depth = 0
         self._current_function: Optional[FunctionSig] = None
 
     def error(self, node, message):
+        """Record a diagnostic at `node`'s position (or with no position,
+        for whole-program errors where `node` is `None`)."""
         line = node.line if isinstance(node, Node) else None
         col = node.col if isinstance(node, Node) else None
         self.errors.append(SemanticError(message, line, col))
 
     def run(self, program: Node):
+        """Entry point: Pass 1 over every top-level declaration, then
+        Pass 2 over every function body. Returns `(self.st, self.errors)`."""
         decls = program.fields["declarations"]
         self._collect_structs_and_typedefs(decls)
         self._collect_functions_and_const_globals(decls)
@@ -223,6 +318,14 @@ class Analyzer:
     # -- Pass 1: types -----------------------------------------------------
 
     def _collect_structs_and_typedefs(self, decls):
+        """First half of Pass 1: gather every `StructDecl` and `TypedefDecl`
+        (including the inline `typedef struct Foo { ... } Bar;` form, which
+        both defines struct `Foo` *and* aliases it to `Bar`) into scratch
+        dicts, then resolve them all. Structs and typedefs are collected
+        into flat dicts *before* any resolution happens so that a struct
+        field of type `Bar` (a typedef) or a typedef aliasing a not-yet-
+        declared struct both work regardless of declaration order.
+        """
         for d in decls:
             if d.kind == "StructDecl":
                 name = d.fields["name"]
@@ -233,6 +336,9 @@ class Analyzer:
             elif d.kind == "TypedefDecl":
                 aliased = d.fields["aliased_type"]
                 if aliased.kind == "StructDef":
+                    # Inline struct form: register the struct itself under
+                    # its own name, and separately record that this
+                    # typedef name aliases a StructType reference to it.
                     sname = aliased.fields["name"]
                     if sname in self._raw_structs:
                         self.error(aliased, f"Struct '{sname}' is already defined")
@@ -250,6 +356,13 @@ class Analyzer:
             self._resolve_typedef(name)
 
     def _resolve_struct(self, name):
+        """Resolve one struct's field types, registering an (initially
+        empty) `StructInfo` in `self.st.structs` *before* resolving any
+        field - this is what lets a struct contain a field whose type
+        refers back to the struct itself (directly, or via a typedef cycle
+        through another struct): the lookup in `_resolve_type`'s
+        `StructType` branch finds the in-progress entry instead of
+        recursing into `_resolve_struct` again."""
         if name in self.st.structs:
             return self.st.structs[name]
         field_nodes = self._raw_structs[name][0]
@@ -265,6 +378,12 @@ class Analyzer:
         return info
 
     def _resolve_typedef(self, name):
+        """Resolve one typedef's alias chain, detecting cycles via
+        `_typedef_resolving`: if resolving `name` requires resolving `name`
+        again (a direct or indirect self-reference, e.g. `typedef A B;
+        typedef B A;`), that inner call finds `name` already in
+        `_typedef_resolving` and reports a cycle error instead of recursing
+        forever."""
         if name in self.st.typedefs:
             return self.st.typedefs[name]
         if name in self._typedef_resolving:
@@ -278,6 +397,10 @@ class Analyzer:
         return resolved
 
     def _resolve_type(self, node):
+        """Turn a parser-produced type Node (`Type`, `StructType`,
+        `ArrayType`, or `TupleType`) into a type descriptor tuple,
+        resolving typedef aliases and nested struct/array/tuple shapes
+        recursively."""
         if node is None:
             return T_ERROR
         if node.kind == "Type":
@@ -307,11 +430,23 @@ class Analyzer:
 
     @staticmethod
     def _const_int_or_none(node):
+        """An array size is only usable at compile time (by `ir.py`'s
+        ARR_NEW) when it's a bare integer literal - anything else (a
+        variable, an expression) resolves to `None` here, meaning "size
+        unknown until an initializer list supplies one"."""
         if node is not None and node.kind == "Literal" and node.fields.get("token_type") == "INTEGER_LIT":
             return node.fields["value"]
         return None
 
     def _collect_functions_and_const_globals(self, decls):
+        """Second half of Pass 1: record every function's signature (so
+        Pass 2 can resolve calls to functions declared anywhere in the
+        file, including later), and fully resolve + type-check every global
+        `const` declaration (globals have no forward-reference problem
+        among themselves the way functions do, since a `const`'s
+        initializer must be a literal, never a reference to another
+        global - see grammar.py's `_const_declarator_fn`).
+        """
         for d in decls:
             if d.kind == "FunctionDecl":
                 name = d.fields["name"]
@@ -339,6 +474,10 @@ class Analyzer:
                         self.error(decl, f"Global '{gname}' is already defined")
                         continue
                     gtype = self._resolve_type(decl.fields["type"])
+                    # Globals keep their bare source name as ir_name (no
+                    # _fresh_ir_name call) - there's exactly one of each
+                    # global for the whole program, so no shadowing scheme
+                    # is needed the way there is for locals.
                     sym = Symbol(gname, gtype, mutable=(d.fields["mutability"] != "const"),
                                  ir_name=gname, storage="global")
                     self.st.globals[gname] = sym
@@ -350,12 +489,30 @@ class Analyzer:
     # -- Pass 2: bodies ------------------------------------------------------
 
     def _fresh_ir_name(self, name):
+        """Generate this local's globally-unique IR name: `"<function>.<name>"`,
+        or `"<function>.<name>$2"`, `"$3"`, ... if `name` has already been
+        used (by an outer scope's local of the same name, i.e. shadowing)
+        earlier in this same function.
+
+        This is the mechanism behind the module docstring's central claim:
+        because every local's ir_name is unique across the *entire
+        program* (not just its own scope), interpreter.py never needs a
+        real nested-scope lookup at runtime - `resolve`/`set_var` can just
+        ask "is this exact name currently a key in globals?" and get the
+        right answer every time, for every frame, with no ambiguity.
+        """
         count = self._name_counters.get(name, 0) + 1
         self._name_counters[name] = count
         base = f"{self._current_function.name}.{name}"
         return base if count == 1 else f"{base}${count}"
 
     def _make_local_symbol(self, name, type_, mutable, owner_node):
+        """Build a fresh local `Symbol` (flagging a same-scope redeclaration
+        as an error) and register it in the innermost active scope, without
+        yet recording it in `node_symbol` - some callers (e.g. `LetDecl`
+        with multiple names) need to build several symbols before deciding
+        how to key them in the side table, hence the split from
+        `_declare_local` below."""
         if name in self._scopes[-1]:
             self.error(owner_node, f"'{name}' is already declared in this scope")
         sym = Symbol(name, type_, mutable, self._fresh_ir_name(name), storage="local")
@@ -363,17 +520,29 @@ class Analyzer:
         return sym
 
     def _declare_local(self, name, type_, mutable, owner_node):
+        """`_make_local_symbol` plus recording the result in `node_symbol`
+        keyed by the declaring node itself - used whenever exactly one
+        symbol maps to exactly one declarator/param/etc. node."""
         sym = self._make_local_symbol(name, type_, mutable, owner_node)
         self.st.node_symbol[id(owner_node)] = sym
         return sym
 
     def _lookup(self, name):
+        """Resolve `name` by walking the scope stack innermost-first (so an
+        inner declaration correctly shadows an outer one), falling back to
+        the globals table if no local scope has it."""
         for scope in reversed(self._scopes):
             if name in scope:
                 return scope[name]
         return self.st.globals.get(name)
 
     def _analyze_function(self, fn_node):
+        """Reset all per-function Pass-2 state (name counters, scope
+        stack, loop depth), declare parameters as the outermost scope's
+        locals, then walk the body. `sig is None` only happens when this
+        function's name was already rejected as a duplicate in Pass 1 (see
+        `_collect_functions_and_const_globals`) - there's nothing further
+        to check against in that case."""
         sig = self.st.functions.get(fn_node.fields["name"])
         if sig is None:
             return  # duplicate-name error already reported in Pass 1
@@ -388,6 +557,11 @@ class Analyzer:
         self._scopes = []
 
     def _analyze_block(self, block_node):
+        """Push a fresh scope, analyze the block's declarations then its
+        statements (in that order - `grammar.py`'s two-phase block parsing
+        already guarantees declarations precede statements), then pop the
+        scope back off so names declared here don't leak into the
+        enclosing block."""
         self._scopes.append({})
         for decl in block_node.fields["declarations"]:
             self._analyze_local_decl(decl)
@@ -396,6 +570,10 @@ class Analyzer:
         self._scopes.pop()
 
     def _analyze_block_or_stmt(self, node):
+        """`if`'s then/else branches are always a real `Block`, *except*
+        an `else if`, which is a bare chained `IfStmt` (see grammar.py's
+        `_if_stmt_fn`) with no block of its own to push/pop a scope for -
+        this dispatches to whichever handling actually applies."""
         if node.kind == "Block":
             self._analyze_block(node)
         else:
@@ -404,6 +582,8 @@ class Analyzer:
     # -- local declarations --
 
     def _analyze_local_decl(self, decl):
+        """Dispatch a block's leading declaration to whichever kind it is
+        (`VarDecl` for `val`/`var`, `LetDecl` for `let`)."""
         if decl.kind == "VarDecl":
             self._analyze_var_decl(decl)
         elif decl.kind == "LetDecl":
@@ -412,6 +592,9 @@ class Analyzer:
             self.error(decl, f"Unsupported declaration kind '{decl.kind}'")
 
     def _analyze_var_decl(self, decl):
+        """`val`/`var` declaration: declare each comma-separated name as a
+        local of the declared type (mutable only for `var`), then
+        type-check its initializer, if any, against that type."""
         mutable = decl.fields["mutability"] == "var"
         for d in decl.fields["declarators"]:
             dtype = self._resolve_type(d.fields["type"])
@@ -421,6 +604,11 @@ class Analyzer:
                 self._check_initializer(init, dtype)
 
     def _check_initializer(self, init_node, declared_type):
+        """Type-check one initializer expression (or initializer list)
+        against the variable's declared type, recording a `node_coerce`
+        entry when the value's type is compatible but not identical (e.g.
+        an `int` initializing a `float`) so `ir.py` knows to wrap it in a
+        `CAST`."""
         if init_node.kind == "InitializerList":
             self._check_initializer_list(init_node, declared_type)
             return
@@ -431,6 +619,12 @@ class Analyzer:
             self.st.node_coerce[id(init_node)] = declared_type
 
     def _check_initializer_list(self, node, declared_type):
+        """Type-check a brace `{ v1, v2, ... }` initializer list against
+        either an array type (each value must coerce to the element type,
+        and the count must match an explicit size if there is one) or a
+        struct type (values are matched positionally against
+        `field_order`, extras still type-checked - for their own errors -
+        but otherwise ignored)."""
         values = node.fields["values"]
         if declared_type[0] == "array":
             elem_type, size = declared_type[1], declared_type[2]
@@ -455,6 +649,9 @@ class Analyzer:
                         self.error(v, f"Cannot use value of type '{type_name(vt)}' for field '{fname}' of type '{type_name(ft)}'")
                     elif not types_equal(vt, ft):
                         self.st.node_coerce[id(v)] = ft
+                # Extra values past the field count still get type-checked
+                # (so a bad expression there is still reported) even though
+                # they have no field to be matched against.
                 for v in values[len(info.field_order):]:
                     self._infer_expr(v)
             return
@@ -463,6 +660,24 @@ class Analyzer:
             self._infer_expr(v)
 
     def _analyze_let_decl(self, decl):
+        """`let` has two shapes (see grammar.py's `_let_stmt_fn`):
+
+          - single-name array form (`array_sizes` is not None): infer the
+            element type either from an initializer list's own elements
+            (unified to one common type) or from an existing array
+            expression being copied, then declare one new array-typed
+            local.
+          - destructuring form: infer every value's type, then match them
+            against the name list either by unpacking one single
+            tuple-typed value (a multi-return call) or positionally
+            zipping several separate values - mismatched counts are
+            reported but still produce placeholder T_ERROR-typed symbols
+            so the rest of the function can keep being analyzed.
+
+        Every `let`-bound name is always mutable (see CLAUDE.md: neither
+        `let` nor `multi_assign` has a `val`/`const`-style marker in the
+        grammar).
+        """
         names = decl.fields["names"]
         values = decl.fields["values"]
         array_sizes = decl.fields.get("array_sizes")
@@ -491,8 +706,10 @@ class Analyzer:
 
         value_types = [self._infer_expr(v) for v in values]
         if len(values) == 1 and value_types[0][0] == "tuple" and len(value_types[0][1]) == len(names):
+            # One call returning a matching-arity tuple: unpack it.
             elem_types = list(value_types[0][1])
         elif len(values) == len(names):
+            # Several separate values, one per name, matched positionally.
             elem_types = value_types
         elif len(values) == 1:
             self.error(decl, f"'{values[0].kind}' does not produce {len(names)} value(s) for this let declaration")
@@ -507,6 +724,8 @@ class Analyzer:
     # -- statements --
 
     def _analyze_stmt(self, node):
+        """Dispatch one statement node to its specific `_analyze_*`
+        handler by `kind`."""
         kind = node.kind
         if kind == "ExprStmt":
             self._infer_expr(node.fields["expression"])
@@ -553,11 +772,20 @@ class Analyzer:
             self.error(node, f"Unsupported statement kind '{kind}'")
 
     def _check_condition(self, node):
+        """Every control-flow condition (if/while/until/guard) must be
+        exactly `bool` - no truthy-value coercion of ints/pointers the way
+        C allows."""
         t = self._infer_expr(node)
         if not (is_error(t) or types_equal(t, T_BOOL)):
             self.error(node, f"Condition must be of type 'bool', got '{type_name(t)}'")
 
     def _analyze_for(self, node):
+        """C-style `for`: its own scope wraps the init/condition/update/body
+        so an init-declared variable (if `init` is a declaration-shaped
+        expression) doesn't leak past the loop - though note `init`/`update`
+        are analyzed as plain expressions here, not declarations; a true
+        `for (var int i = 0; ...)` init form isn't part of this grammar
+        (see grammar.py's `_for_stmt_fn` - `init` is always `expression?`)."""
         self._scopes.append({})
         if node.fields["init"] is not None:
             self._infer_expr(node.fields["init"])
@@ -571,6 +799,11 @@ class Analyzer:
         self._scopes.pop()
 
     def _analyze_for_in(self, node):
+        """`for (x in iterable)`: a `RangeExpr` iterable always yields
+        `int` (the range's own bounds are checked as plain expressions,
+        not via `_check_condition`, since they aren't a boolean test); any
+        other iterable must be an array, and the loop variable takes its
+        element type."""
         iterable = node.fields["iterable"]
         if iterable.kind == "RangeExpr":
             self._infer_expr(iterable.fields["start"])
@@ -593,6 +826,12 @@ class Analyzer:
         self._scopes.pop()
 
     def _analyze_return(self, node):
+        """Check a `return`'s value count and type(s) against the enclosing
+        function's declared return type - three distinct shapes (`void`,
+        a single type, or a tuple type), each with its own arity check
+        before any type-checking, so a wrong-arity return still gets every
+        value's own expression checked (for its own independent errors)
+        rather than being skipped outright."""
         values = node.fields["values"]
         ret_type = self._current_function.return_type
 
@@ -629,6 +868,14 @@ class Analyzer:
             self.st.node_coerce[id(values[0])] = ret_type
 
     def _analyze_builtin(self, node):
+        """`print` accepts any expressions. `input` is stricter: every
+        argument must be a plain, already-declared, mutable identifier
+        (not an array/struct field, index expression, or literal) - `input`
+        writes a value *into* a variable, so it needs an actual assignable
+        slot to write into. Note this only checks the *target's* shape and
+        mutability, not its type (see LIMITATIONS.md: `input()` into an
+        array/struct variable passes this check but misbehaves at runtime).
+        """
         if node.fields["name"] == "print":
             for a in node.fields["args"]:
                 self._infer_expr(a)
@@ -643,6 +890,13 @@ class Analyzer:
                 self.error(a, f"Cannot input() into immutable variable '{sym.name}'")
 
     def _is_predicate_pattern(self, pattern):
+        """A match pattern is treated as a standalone boolean predicate
+        (evaluated on its own, not compared against the subject) whenever
+        its outermost node is a relational/logical `BinaryExpr` or a `!`
+        `UnaryExpr` - e.g. `code > 9 =>`. This is a shape heuristic, not a
+        real type-based distinction: see LIMITATIONS.md for the case it
+        can't express (equality-comparing the subject to a bool-valued
+        sub-expression)."""
         if pattern.kind == "BinaryExpr" and pattern.fields.get("op") in {"<", ">", "<=", ">=", "==", "!=", "&&", "||"}:
             return True
         if pattern.kind == "UnaryExpr" and pattern.fields.get("op") == "!":
@@ -650,6 +904,11 @@ class Analyzer:
         return False
 
     def _analyze_pattern(self, pattern, subj_type):
+        """Type-check one match arm's pattern against the subject's type,
+        branching on the same three pattern shapes ir.py's
+        `_gen_match_test` later dispatches on: wildcard (nothing to check),
+        range (needs a numeric subject), predicate (must itself be `bool`,
+        subject type irrelevant), or plain equality-comparable value."""
         if pattern.kind == "WildcardPattern":
             return
         if pattern.kind == "RangeExpr":
@@ -671,6 +930,13 @@ class Analyzer:
                 self.error(pattern, f"Match pattern type '{type_name(pt)}' does not match subject type '{type_name(subj_type)}'")
 
     def _analyze_match(self, node, is_expr):
+        """Shared by `MatchStmt` and `MatchExpr` (`is_expr` picks which):
+        infer the subject once, then check every arm's pattern against it.
+        For the expression form only, also `unify()` every arm's value type
+        into one common result type (recorded in `node_type`, consumed by
+        `ir.py`'s `gen_match` to know the type of its result temp) -
+        `unify` returning `None` (genuine mismatch) is reported once here,
+        for the whole match, rather than per-arm."""
         subj_type = self._infer_expr(node.fields["subject"])
         value_key = "value" if is_expr else "body"
         arm_types = []
@@ -691,6 +957,14 @@ class Analyzer:
         return None
 
     def _analyze_try(self, node):
+        """`try`/`catch`/`finally`: the catch variable is always declared
+        as a fresh `string`-typed local scoped to just that catch clause
+        (matching the language rule that thrown/caught values are always
+        strings - see LIMITATIONS.md for the corresponding gap on the
+        `throw` side, which never enforces this). Every catch clause is
+        analyzed here, even though `ir.py`'s `gen_try` only ever lowers the
+        first one - see LIMITATIONS.md's "multiple catch clauses are mostly
+        decorative"."""
         self._analyze_block(node.fields["body"])
         for clause in node.fields["catch_clauses"]:
             self._scopes.append({})
@@ -702,6 +976,21 @@ class Analyzer:
             self._analyze_block(node.fields["finally_body"])
 
     def _analyze_multi_assign(self, node):
+        """`int a, b = f();` form: declares brand-new locals (unlike a plain
+        `AssignExpr`, which targets already-declared names) with their own
+        explicit types, then checks the right-hand side the same way
+        `_analyze_let_decl`'s destructuring form does - one tuple-typed call
+        unpacked, or several values zipped positionally.
+
+        `src_nodes` holds `None` placeholders in the tuple-unpack case
+        (`values = [x]` but `lvalues` has several entries) because there is
+        no single per-target *source expression* to attach a `node_coerce`
+        entry to - the source is one call's tuple result, not one AST node
+        per target - so the coercion loop below simply skips recording a
+        coercion whenever `v is None`. (Whether that unpacked tuple's
+        *element* types actually get cast at all is `ir.py`'s `UNPACK`
+        opcode's concern, not this analysis's.)
+        """
         lvalues = node.fields["lvalues"]  # list of {"type": Node, "name": str}
         values = node.fields["values"]
         types = [self._resolve_type(lv["type"]) for lv in lvalues]
@@ -729,6 +1018,10 @@ class Analyzer:
     # -- expressions --
 
     def _infer_expr(self, node):
+        """Infer (and record in `node_type`) the type of one expression
+        node, dispatching by `kind`. This is the single place every
+        expression-type fact in the program is decided - every other
+        method above calls into this rather than duplicating type logic."""
         kind = node.kind
 
         if kind == "Literal":
@@ -838,6 +1131,13 @@ class Analyzer:
         return T_ERROR
 
     def _infer_binary(self, node):
+        """Type-check one `BinaryExpr` by operator family: arithmetic
+        (`+ - * / %`, both operands numeric; `+` additionally rejects
+        `string` - this language has no string concatenation operator, see
+        CLAUDE.md), equality (`== !=`, numeric cross-comparison allowed, or
+        exact type match otherwise), relational (`< > <= >=`, numeric
+        only), and logical (`&& ||`, both operands must be exactly
+        `bool`)."""
         op = node.fields["op"]
         l = self._infer_expr(node.fields["left"])
         r = self._infer_expr(node.fields["right"])
@@ -879,6 +1179,16 @@ class Analyzer:
         return T_ERROR
 
     def _infer_assign(self, node):
+        """Type-check an `AssignExpr`. The target must be an `Identifier`
+        (checked mutable - `val`/`const` binding reassignment is rejected
+        here, though *element/field* mutation through such a binding is
+        not, since that goes through the `IndexExpr`/`MemberExpr` branch
+        instead, which has no mutability of its own to check - only the
+        *container* variable's mutability would apply, and arrays/structs
+        are mutable containers by construction) or an `IndexExpr`/
+        `MemberExpr` (whose own type-checking already validates the
+        container/field access). A compatible-but-different value type
+        records a `node_coerce` entry the same way initializers do."""
         target = node.fields["target"]
         value = node.fields["value"]
 
@@ -908,6 +1218,19 @@ class Analyzer:
         return target_type
 
     def _infer_call(self, node):
+        """Resolve and type-check a `CallExpr`. Records the resolved
+        `FunctionSig` in `node_call` and - the key output `ir.py` actually
+        needs - the arguments in **positional call order** in
+        `node_call_args`, regardless of whether the call used positional or
+        named arguments; `ir.py`'s `_gen_call` just emits one `PARAM` quad
+        per entry in that list, in order, so it never needs to know or care
+        whether the source used `f(1, 2)` or `f(b: 2, a: 1)`.
+
+        Named and positional arguments cannot be mixed in one call (checked
+        below); named calls must supply every parameter (no defaults exist
+        in this language - see LIMITATIONS.md), and positional calls are
+        checked strictly by count and per-position type.
+        """
         callee = node.fields["callee"]
         if callee.kind != "Identifier":
             self.error(node, "Only direct function calls are supported")
@@ -939,6 +1262,10 @@ class Analyzer:
             missing = [p for p in sig.param_names if p not in provided]
             if missing:
                 self.error(node, f"Missing argument(s) for parameter(s): {', '.join(missing)}")
+            # Rebuild the argument list in the function's own declared
+            # parameter order - this is what makes node_call_args
+            # positionally-ordered regardless of the named call's writing
+            # order.
             ordered = []
             for pname, ptype in zip(sig.param_names, sig.param_types):
                 v = provided.get(pname)
@@ -967,4 +1294,6 @@ class Analyzer:
 
 
 def analyze(program: Node):
+    """Module entry point: run a fresh `Analyzer` over `program` and return
+    `(SymbolTable, [SemanticError])`."""
     return Analyzer().run(program)

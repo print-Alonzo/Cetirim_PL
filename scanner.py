@@ -1,3 +1,20 @@
+"""Lexical analyzer: the first phase of the pipeline.
+
+Phase handoff: receives raw source text (a plain Python `str`) and produces
+a flat `List[Token]` (always ending in one `EOF` token) plus a
+`List[LexError]`, via `Scanner(source).scan_all()`. `parser.py`'s
+`parse_source()` is the only caller in the rest of the pipeline - it feeds
+this module's token list straight into `grammar_engine.py`'s `Engine`.
+
+Worked micro-example: the source line `int x = 1;` scans to six tokens:
+`KEYWORD("int") IDENTIFIER("x") ASSIGN_OP("=") INTEGER_LIT("1", attr=1)
+SEMICOLON(";") EOF("")` - note `INTEGER_LIT`'s `attr` already holds the
+decoded Python `int` `1`, not just the source text `"1"`.
+
+See `Scanner`'s class docstring for the position-tracking model and the
+error-recovery philosophy every `_scan_*` method follows.
+"""
+
 import sys
 import os
 import time
@@ -8,6 +25,11 @@ from typing import List, Optional, Tuple
 
 #  Token types
 class TT:
+    """Namespace of token type string constants - a plain class used as a
+    grouped set of names (no `enum.Enum`) so a token's `ttype` field can just
+    be compared/printed as a bare string, matching every other module's
+    string-tag style (see e.g. `ast_nodes.Node.kind`)."""
+
     # Literals
     INTEGER_LIT   = "INTEGER_LIT"
     FLOAT_LIT     = "FLOAT_LIT"
@@ -63,6 +85,13 @@ BOOL_KEYWORDS = {"true", "false"}
 #  Token dataclass
 @dataclass
 class Token:
+    """One scanned token: its type, exact source text (`lexeme`), position,
+    and - for literals only - the already-decoded Python value (`attr`:
+    a real `int`/`float`/`bool`/unescaped string, not source text the
+    parser would have to re-parse). Every later phase (grammar.py's
+    `_literal_value`, `_primary_fn`, ...) reads `attr` directly rather than
+    parsing `lexeme` a second time."""
+
     ttype:  str
     lexeme: str
     line:   int
@@ -80,6 +109,11 @@ class Token:
 #  Lexical error
 @dataclass
 class LexError:
+    """One recorded lexical problem: a message, the position it occurred
+    at, and an optional context snippet (the offending text) for display.
+    Recording this never stops scanning - see `Scanner`'s docstring for the
+    recovery philosophy every `_add_error` call relies on."""
+
     message: str
     line:    int
     col:     int
@@ -92,6 +126,26 @@ class LexError:
 
 #  Scanner
 class Scanner:
+    """Character-by-character lexer (no regex): reads `source` once,
+    left-to-right, and produces a flat token list plus a list of lexical
+    errors via `scan_all()`.
+
+    Position tracking: `pos` (a plain index into `source`), `line`, and
+    `col` are only ever advanced together, and only by `_advance()` - every
+    other method that consumes characters goes through it (directly or via
+    `_match`), which is what keeps `line`/`col` always in sync with `pos`
+    without each caller having to manage them by hand.
+
+    Error-recovery philosophy: the scanner **never stops** on a bad
+    character or a malformed literal. Every `_scan_*` method that hits a
+    problem calls `_add_error()` (recording a `LexError`, but not raising)
+    and then still returns *some* token - usually an `ERROR` token, but
+    sometimes a best-effort real one (e.g. an unterminated string still
+    returns everything it managed to read). This means one bad token in
+    line 3 never prevents every valid token in the rest of the file from
+    being reported.
+    """
+
     _SPECIAL_CHARS = set(r'!@#$%^&()-_+=[]{}|;:,.<>?/* ')
 
     def __init__(self, source: str):
@@ -103,10 +157,19 @@ class Scanner:
         self.errors: List[LexError] = []
 
     def _peek(self, offset: int = 0) -> str:
+        """Look at the character `offset` positions ahead of `pos` without
+        consuming it. Returns `"\\0"` past the end of `source` - a sentinel
+        so every caller can keep comparing against a plain character
+        (`self._peek() == "."`, etc.) instead of separately checking bounds
+        every time."""
         idx = self.pos + offset
         return self.source[idx] if idx < len(self.source) else "\0"
 
     def _advance(self) -> str:
+        """Consume and return the current character, updating `line`/`col`
+        - the *only* place `pos`/`line`/`col` move together (see the class
+        docstring), so a newline correctly resets `col` to 1 and bumps
+        `line` no matter which `_scan_*` method happens to be consuming it."""
         ch = self.source[self.pos]
         self.pos += 1
         if ch == "\n":
@@ -117,6 +180,10 @@ class Scanner:
         return ch
 
     def _match(self, expected: str) -> bool:
+        """Consume and return True if the current character is exactly
+        `expected`; otherwise leave `pos` untouched and return False - the
+        primitive most `_scan_*` methods use to conditionally consume one
+        character."""
         if self.pos < len(self.source) and self.source[self.pos] == expected:
             self._advance()
             return True
@@ -134,6 +201,11 @@ class Scanner:
         self.errors.append(LexError(msg, line, col, context))
 
     def _skip_whitespace_and_comments(self):
+        """Advance past any run of whitespace, `//` line comments, and
+        `/* ... */` block comments before the next token. An unterminated
+        block comment is reported (via `_add_error`) but scanning still
+        continues from wherever it ran out of input, rather than treating
+        the rest of the file as "inside a comment forever"."""
         while self.pos < len(self.source):
             ch = self._peek()
 
@@ -166,6 +238,19 @@ class Scanner:
             break
 
     def _scan_number(self) -> None:
+        """Scan a digit-led token: a plain integer, a float (digits, a
+        `.` not followed by another `.` - so `0..5` isn't mistaken for a
+        float - then more digits), or the digit-letter collision case.
+
+        The collision case (`32abc`): once a digit run is immediately
+        followed by a letter/underscore, this keeps consuming the whole
+        alphanumeric run, then finds the first non-digit character in it
+        and **splits the run into two valid tokens right there** -
+        `INTEGER_LIT("32")` + `IDENTIFIER("abc")` - rather than emitting one
+        big `ERROR` token. This is what lets scanning (and later phases)
+        keep making sense of the rest of the line instead of giving up on
+        it entirely.
+        """
         sl, sc = self.line, self.col
         lexeme = []
 
@@ -208,9 +293,12 @@ class Scanner:
         self.tokens.append(Token(TT.INTEGER_LIT, lex, sl, sc, int(lex)))
 
     def _scan_dot_float(self) -> Optional[Token]:
+        """Scan a float that starts with `.` (no leading digit, e.g.
+        `.5`) - called from `scan_all` only after it's already confirmed
+        the character after `.` is a digit, so this never needs to fail."""
         # Called when we see '.' and next char is a digit
         sl, sc = self.line, self.col
-        self._advance() 
+        self._advance()
         lexeme = ["."]
         while self._peek().isdigit():
             lexeme.append(self._advance())
@@ -218,6 +306,10 @@ class Scanner:
         return Token(TT.FLOAT_LIT, lex, sl, sc, float(lex))
 
     def _scan_char_lit(self) -> Token:
+        """Scan `'x'`, handling an escape sequence, an empty `''` (an
+        error - there's no valid character it could mean), and a missing
+        closing `'` (reported but still returns whatever character was
+        read, rather than discarding it)."""
         sl, sc = self.line, self.col
         self._advance()  # consume opening '
         if self.pos >= len(self.source):
@@ -245,6 +337,19 @@ class Scanner:
         return Token(TT.CHAR_LIT, f"'{val}'", sl, sc, val)
 
     def _scan_escape_seq(self) -> str:
+        """Consume a `\\x` escape sequence and return its decoded
+        character (or, for an unrecognized escape, the literal two-character
+        text `\\x` unchanged, plus a recorded error).
+
+        This is the *only* place escape sequences are resolved, and it runs
+        during scanning - well before grammar.py's interpolated-string
+        splitter ever sees the string's text. That ordering is the direct
+        cause of the interpolation limitation documented in grammar.py and
+        LIMITATIONS.md: by the time `` `text {expr}` `` reaches the splitter,
+        any `\\{` in the source has already become a plain `{` here, so the
+        splitter has no way left to tell "an escaped brace" apart from "an
+        interpolation start".
+        """
         self._advance()  # consume backslash
         nxt = self._peek()
         escape_map = {
@@ -261,6 +366,11 @@ class Scanner:
             return f"\\{nxt}"
 
     def _scan_string_lit(self) -> Token:
+        """Scan `"..."`, resolving escapes as it goes. A newline before the
+        closing `"` ends the literal early (strings can't span lines) and
+        is reported as unterminated, same as running out of source
+        entirely - either way, whatever characters were read so far are
+        preserved in the error's context."""
         sl, sc = self.line, self.col
         self._advance()  # consume opening "
         chars = []
@@ -284,6 +394,11 @@ class Scanner:
         return Token(TT.ERROR, '"' + "".join(chars), sl, sc)
 
     def _scan_interp_string(self) -> Token:
+        """Scan `` `...` ``, identical in shape to `_scan_string_lit` but
+        delimited by backticks. The token's `attr` (the escape-resolved raw
+        text, `{expr}` markers and all) is what grammar.py's interpolation
+        splitter later parses - the scanner itself has no idea `{...}` runs
+        are special; it just hands back the text between backticks."""
         sl, sc = self.line, self.col
         self._advance()  # consume opening `
         chars = []
@@ -302,6 +417,11 @@ class Scanner:
         return Token(TT.ERROR, "`" + "".join(chars), sl, sc)
 
     def _scan_identifier(self) -> Token:
+        """Scan a run of alphanumeric/underscore characters and classify
+        it: a bool literal (`true`/`false`), the wildcard `_` (its own
+        token type, `UNDERSCORE`, not a plain keyword - grammar.py's
+        `_pattern_fn` matches on that type directly), any other reserved
+        word (`KEYWORD`), or a plain `IDENTIFIER`."""
         sl, sc = self.line, self.col
         lexeme = []
         while self._peek().isalnum() or self._peek() == "_":
@@ -318,6 +438,27 @@ class Scanner:
 
     # main scan loop
     def scan_all(self) -> Tuple[List[Token], List[LexError]]:
+        """Tokenize the entire source: skip whitespace/comments, then
+        dispatch on the current character, repeating until EOF. Returns
+        `(tokens, errors)` - `tokens` always ends with one `EOF` token, and
+        is complete (covers the whole file) even when `errors` is
+        non-empty, per the class's recovery philosophy.
+
+        Dispatch order matters and is deliberate:
+          - quoted forms (`"`, `'`, `` ` ``) are checked *before*
+            identifiers/keywords, since none of their delimiter characters
+            could otherwise start an identifier anyway, but checking them
+            first keeps the dispatch chain reading top-to-bottom by
+            "most specific first".
+          - `.` is handled as its own case *before* the two-char operator
+            table, because it has three completely different meanings
+            depending on context (range `..`, a leading-dot float `.5`, or
+            plain member-access `.`) that the generic two-char lookup
+            below has no way to disambiguate.
+          - the two-character operators (`==`, `!=`, `&&`, ...) are checked
+            *before* falling back to the single-character table, so `=`
+            alone doesn't get tokenized before `==` gets a chance to match.
+        """
         while True:
             self._skip_whitespace_and_comments()
             if self.pos >= len(self.source):
@@ -327,7 +468,7 @@ class Scanner:
             sl, sc = self.line, self.col
             ch = self._peek()
 
-            # string literal 
+            # string literal
             if ch == '"':
                 self.tokens.append(self._scan_string_lit())
                 continue
@@ -426,6 +567,7 @@ class Scanner:
 
 #  Output formatting
 def _header(title: str, width: int = 72) -> str:
+    """Render a `===`-bordered section title for the CLI report."""
     bar = "=" * width
     return f"\n{bar}\n  {title}\n{bar}\n"
 
@@ -438,6 +580,10 @@ def format_output(
     elapsed_ms: float,
     show_src:   bool = True,
 ) -> str:
+    """Render the full scanner CLI report: an optional source listing, the
+    lexical error table, the full token stream table, and summary
+    statistics (including a token-type breakdown) - see README.md's
+    "Scanner Output Format" for the exact layout this produces."""
     lines = []
 
     if show_src:
@@ -486,6 +632,11 @@ def format_output(
 
 #  CLI entry point
 def main():
+    """CLI entry point: `python scanner.py <source_file> [-o out] [--no-src]`.
+    Prints the report to stdout by default, or writes it to `-o`/`--output`
+    (still printing a short summary to stdout either way). With no
+    `--output`, exits `2` if any lexical error was found - the same
+    exit-2-on-error contract every other phase's CLI follows."""
     parser = argparse.ArgumentParser(
         description="CSC617M Custom Language Scanner",
         formatter_class=argparse.RawDescriptionHelpFormatter,
