@@ -213,6 +213,30 @@ python run_tests.py --update
 
 ---
 
+## Building a Standalone Binary
+
+The interpreter has no external dependencies, so it can be packaged as a
+single self-contained `cetirim.pyz` archive via Python's stdlib `zipapp`
+module — runnable anywhere a Python 3.8+ interpreter exists, no `pip
+install` needed:
+
+```bash
+# Build cetirim.pyz at the repo root
+python build.py
+
+# Run it exactly like interpreter.py
+python cetirim.pyz <source_file> [--ir] [--trace] [--symbols]
+
+# Or, on Unix, run it directly - the archive is executable
+./cetirim.pyz <source_file>
+```
+
+Rebuild with `python build.py` any time `scanner.py`, `parser.py`,
+`grammar.py`, `grammar_engine.py`, `ast_nodes.py`, `semantics.py`, `ir.py`,
+or `interpreter.py` changes — the archive is a snapshot, not a symlink.
+
+---
+
 ## Scanner Output Format
 
 Each run produces three sections:
