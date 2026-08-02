@@ -555,7 +555,7 @@
 
   Total tokens  : 444
   Total errors  : 0
-  Scan time     : 1.595 ms
+  Scan time     : 0.746 ms
   Source lines  : 88
   Source chars  : 2290
 

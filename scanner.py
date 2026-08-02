@@ -97,6 +97,7 @@ class Token:
     line:   int
     col:    int
     attr:   Optional[object] = None   # coerced value for literals
+    parts:  Optional[list] = None     # INTERP_STRING only: see _scan_interp_string
 
     def __str__(self) -> str:
         attr_part = f"  [attr={self.attr!r}]" if self.attr is not None else ""
@@ -341,20 +342,22 @@ class Scanner:
         character (or, for an unrecognized escape, the literal two-character
         text `\\x` unchanged, plus a recorded error).
 
-        This is the *only* place escape sequences are resolved, and it runs
-        during scanning - well before grammar.py's interpolated-string
-        splitter ever sees the string's text. That ordering is the direct
-        cause of the interpolation limitation documented in grammar.py and
-        LIMITATIONS.md: by the time `` `text {expr}` `` reaches the splitter,
-        any `\\{` in the source has already become a plain `{` here, so the
-        splitter has no way left to tell "an escaped brace" apart from "an
-        interpolation start".
+        This is the only place escape sequences are resolved for plain
+        (`"..."`) and char (`'...'`) literals, and for the literal-text
+        portions of an interpolated (`` `...` ``) string outside any
+        `{...}` - see `_scan_interp_string`, which does *not* call this
+        inside a `{...}` region (that's source code, not string data, so it
+        gets no escape processing at all - it's re-scanned as real source
+        by grammar.py). `{`/`}` are in the escape map specifically so `\\{`
+        can produce a literal brace in an interpolated string's literal
+        text without starting an expression region.
         """
         self._advance()  # consume backslash
         nxt = self._peek()
         escape_map = {
             "n": "\n", "t": "\t", "r": "\r",
-            "\\": "\\", "'": "'", '"': '"', "0": "\0"
+            "\\": "\\", "'": "'", '"': '"', "0": "\0",
+            "{": "{", "}": "}",
         }
         if nxt in escape_map:
             self._advance()
@@ -395,24 +398,112 @@ class Scanner:
 
     def _scan_interp_string(self) -> Token:
         """Scan `` `...` ``, identical in shape to `_scan_string_lit` but
-        delimited by backticks. The token's `attr` (the escape-resolved raw
-        text, `{expr}` markers and all) is what grammar.py's interpolation
-        splitter later parses - the scanner itself has no idea `{...}` runs
-        are special; it just hands back the text between backticks."""
+        delimited by backticks, *and* splits the body into alternating
+        literal/expression parts as it goes - this is the only place with
+        enough information to do that correctly, since it's the only place
+        that still knows which braces came from a `\\{` escape and which
+        characters are inside a nested `"..."`/`'...'` literal (where a
+        brace or backtick means nothing special).
+
+        Two parallel outputs:
+          - `token.attr`/`lexeme` - the whole body as one escape-resolved
+            string, computed exactly the way it always was (every
+            character outside a `{...}` region goes through
+            `_scan_escape_seq`; a `{...}` region contributes its literal
+            source text, braces included, unchanged) - so the `*_tokens.txt`
+            dumps and `format_output` don't move for any interpolation that
+            doesn't actually exercise the two limitations this fixes.
+          - `token.parts` - alternating `("lit", resolved_text)` /
+            `("expr", raw_source_text)` tuples for grammar.py's
+            `_build_interp_string_node` to consume directly, replacing the
+            old post-hoc splitter. `expr` text is raw (unescaped) - it's
+            source code, not string data, so grammar.py re-scans it as-is;
+            resolving escapes in it first (like the old code effectively
+            did, since it ran `_scan_escape_seq` over the whole body with
+            no brace-awareness at all) could corrupt a nested string
+            literal's own escapes before the re-scan ever saw them.
+
+        Brace nesting inside a `{...}` region (e.g. an array literal) is
+        tracked via `depth`; a `"..."`/`'...'` literal inside one is
+        skipped over character-by-character (its own escapes included, so
+        an escaped quote doesn't end it early) without interpretation, so
+        neither its braces nor a stray backtick inside it can confuse the
+        split - fixing `` `{f("}")}` ``.
+        """
         sl, sc = self.line, self.col
         self._advance()  # consume opening `
-        chars = []
+        chars = []      # whole-body text, for attr/lexeme
+        parts = []       # alternating ("lit", ...) / ("expr", ...)
+        lit_buf = []
+        expr_buf = []
+        depth = 0        # 0 = outside any {...}, >0 = nested brace depth inside one
+
         while self.pos < len(self.source):
             ch = self._peek()
-            if ch == "`":
+
+            if depth == 0 and ch == "`":
                 self._advance()
-                lex = "`" + "".join(chars) + "`"
-                return Token(TT.INTERP_STRING, lex, sl, sc, "".join(chars))
-            if ch == "\\":
-                chars.append(self._scan_escape_seq())
-            else:
+                if lit_buf:
+                    parts.append(("lit", "".join(lit_buf)))
+                text = "".join(chars)
+                tok = Token(TT.INTERP_STRING, "`" + text + "`", sl, sc, text)
+                tok.parts = parts
+                return tok
+
+            if depth == 0 and ch == "{":
+                if lit_buf:
+                    parts.append(("lit", "".join(lit_buf)))
+                    lit_buf = []
+                depth = 1
+                self._advance()
+                continue
+
+            if depth == 0 and ch == "\\":
+                resolved = self._scan_escape_seq()
+                chars.append(resolved)
+                lit_buf.append(resolved)
+                continue
+
+            if depth == 0:
                 chars.append(ch)
+                lit_buf.append(ch)
                 self._advance()
+                continue
+
+            # depth > 0: inside a `{...}` expression region - raw capture.
+            if ch in ('"', "'"):
+                quote = ch
+                expr_buf.append(ch)
+                self._advance()
+                while self.pos < len(self.source) and self._peek() not in (quote, "\n"):
+                    c2 = self._advance()
+                    expr_buf.append(c2)
+                    if c2 == "\\" and self.pos < len(self.source):
+                        expr_buf.append(self._advance())
+                if self.pos < len(self.source) and self._peek() == quote:
+                    expr_buf.append(self._advance())
+                continue
+
+            if ch == "{":
+                depth += 1
+                expr_buf.append(ch)
+                self._advance()
+                continue
+
+            if ch == "}":
+                depth -= 1
+                self._advance()
+                if depth == 0:
+                    parts.append(("expr", "".join(expr_buf)))
+                    chars.append("{" + "".join(expr_buf) + "}")
+                    expr_buf = []
+                else:
+                    expr_buf.append(ch)
+                continue
+
+            expr_buf.append(ch)
+            self._advance()
+
         self._add_error("Unterminated interpolated string (missing closing `)", sl, sc)
         return Token(TT.ERROR, "`" + "".join(chars), sl, sc)
 

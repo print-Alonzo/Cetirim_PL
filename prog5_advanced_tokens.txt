@@ -837,7 +837,7 @@
 
   Total tokens  : 658
   Total errors  : 0
-  Scan time     : 1.091 ms
+  Scan time     : 1.129 ms
   Source lines  : 156
   Source chars  : 4155
 

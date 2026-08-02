@@ -394,7 +394,10 @@ def _let_stmt_fn(ps, committed):
         Term(TT.SEMICOLON, msg="Expected ';' after let declaration").run(ps, True)
         return Node("LetDecl", {"names": [first_name.lexeme], "array_sizes": [size], "values": [initializer]})
 
-    # `let name (, name)* = expr (, expr)*;` - destructuring form.
+    # `let name (, name)* = expr (, expr)*;` - destructuring form. A `_` in
+    # place of a name discards that position instead of binding it (records
+    # `None` in `names`, matched to `_analyze_let_decl`'s symbol list -
+    # semantics.py skips declaring a symbol for it).
     names = [first_name.lexeme]
     while True:
         save = ps.pos
@@ -403,7 +406,12 @@ def _let_stmt_fn(ps, committed):
         except Fail:
             ps.pos = save
             break
-        names.append(Term(TT.IDENTIFIER, msg="Expected identifier after ','").run(ps, True).lexeme)
+        try:
+            Term(TT.UNDERSCORE).run(ps, False)
+        except Fail:
+            names.append(Term(TT.IDENTIFIER, msg="Expected identifier or '_' after ','").run(ps, True).lexeme)
+        else:
+            names.append(None)
 
     Term(TT.ASSIGN_OP, msg="Expected '=' in let declaration").run(ps, True)
     values = comma_list(Ref("expression", fail_msg="Expected expression")).run(ps, True)
@@ -683,59 +691,15 @@ _PRIMARY_LITERAL_TYPES = {
 # ---------------------------------------------------------------------------
 # Interpolated strings  (`text {expr} more text`)
 #
-# The scanner hands us the fully escape-resolved string in tok.attr. We split
-# it on unescaped { ... } runs, re-scan+re-parse each embedded expression
-# with the same Scanner/GRAMMAR machinery used for the whole file, and lower
-# the literal runs into ordinary Literal nodes. Known limitation: because the
-# scanner already resolved escapes before we ever see the string, `\{` cannot
-# be used to escape a literal brace (see README / LIMITATIONS.md).
+# scanner.py's _scan_interp_string does the actual splitting into alternating
+# ("lit", text) / ("expr", text) chunks (tok.parts below) - it's the only
+# place with enough information to do that correctly, since it's the only
+# place that still knows which braces came from a `\{` escape and which
+# characters are inside a nested "..."/'...' literal. All this module does is
+# lower each chunk: a literal run into an ordinary Literal node, an
+# expression run by re-scanning+re-parsing it with the same Scanner/GRAMMAR
+# machinery used for the whole file.
 # ---------------------------------------------------------------------------
-
-def _split_interp_parts(text, ps, tok):
-    """Split an interpolated string's already-escape-resolved text into
-    alternating ("lit", text) / ("expr", text) chunks on unescaped `{ ... }`
-    runs.
-
-    The brace matching here is a **naive character-level depth counter**
-    (`depth` just counts `{`/`}` occurrences) - it has no idea it might be
-    inside a nested string literal, so an embedded expression containing its
-    own `{`/`}` inside a string (e.g. `` `{f("}")}` ``) will confuse it. This
-    is a known, accepted limitation (see LIMITATIONS.md), not a bug to fix
-    here.
-    """
-    parts = []
-    buf = []
-    i, n = 0, len(text)
-    while i < n:
-        ch = text[i]
-        if ch == "{":
-            if buf:
-                parts.append(("lit", "".join(buf)))
-                buf = []
-            j = i + 1
-            depth = 1
-            expr_chars = []
-            while j < n and depth > 0:
-                if text[j] == "{":
-                    depth += 1
-                elif text[j] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                expr_chars.append(text[j])
-                j += 1
-            if depth != 0:
-                ps.error(f"Unterminated interpolation '{{' in string {tok.lexeme}")
-                return parts
-            parts.append(("expr", "".join(expr_chars)))
-            i = j + 1
-        else:
-            buf.append(ch)
-            i += 1
-    if buf:
-        parts.append(("lit", "".join(buf)))
-    return parts
-
 
 def _parse_embedded_expr(text, ps, tok):
     """Parse one `{expr}` chunk's raw text as a standalone expression, by
@@ -770,11 +734,11 @@ def _parse_embedded_expr(text, ps, tok):
 
 def _build_interp_string_node(ps, tok):
     """Assemble the final `InterpString` node: walk the (lit, expr) chunks
-    from `_split_interp_parts`, lowering each literal run into a plain
-    `Literal(STRING_LIT)` node and each expression run through
+    the scanner already split out in `tok.parts`, lowering each literal run
+    into a plain `Literal(STRING_LIT)` node and each expression run through
     `_parse_embedded_expr`."""
     parts = []
-    for kind, text in _split_interp_parts(tok.attr, ps, tok):
+    for kind, text in tok.parts:
         if kind == "lit":
             parts.append(Node("Literal", {"token_type": TT.STRING_LIT, "lexeme": text, "value": text}))
         else:
@@ -1164,18 +1128,26 @@ GRAMMAR["throw_stmt"] = Rule(_throw_stmt_fn)
 
 
 def _multi_assign_stmt_fn(ps, committed):
-    """`multi_assign_stmt := type IDENTIFIER (',' type? IDENTIFIER)* '=' expression (',' expression)* ';'`
+    """`multi_assign_stmt := type (IDENTIFIER|'_') (',' type? (IDENTIFIER|'_'))* '=' expression (',' expression)* ';'`
     - re-declares one or more *new* locals (each with its own type,
     inheriting the previous one's type when omitted, e.g. `int a, b = f();`)
     and assigns them in one statement; distinct from `let`, which never
-    states an explicit type. Recognized by a leading type keyword, which is
-    why this is tried before `expr_stmt` in the `statement` Alt below - a
-    bare type keyword is never the start of a valid ordinary expression.
+    states an explicit type. A `_` in place of a name discards that slot
+    (still type-checked and evaluated, just not bound to anything - see
+    semantics.py's `_analyze_multi_assign`). Recognized by a leading type
+    keyword, which is why this is tried before `expr_stmt` in the
+    `statement` Alt below - a bare type keyword is never the start of a
+    valid ordinary expression.
     """
     if not (ps.check(TT.KEYWORD) and ps.current().lexeme in TYPE_KEYWORDS):
         raise Fail()
     first_type = Ref("type", fail_msg="Expected type").run(ps, True)
-    first_name = Term(TT.IDENTIFIER, msg="Expected identifier after type").run(ps, True).lexeme
+    try:
+        Term(TT.UNDERSCORE).run(ps, False)
+    except Fail:
+        first_name = Term(TT.IDENTIFIER, msg="Expected identifier after type").run(ps, True).lexeme
+    else:
+        first_name = None  # `_` discards this slot - see semantics.py's _analyze_multi_assign
     lvalues = [{"type": first_type, "name": first_name}]
 
     while True:
@@ -1189,7 +1161,12 @@ def _multi_assign_stmt_fn(ps, committed):
             next_type = Ref("type", fail_msg="Expected type").run(ps, True)
         else:
             next_type = first_type
-        next_name = Term(TT.IDENTIFIER, msg="Expected identifier in multi-assign").run(ps, True).lexeme
+        try:
+            Term(TT.UNDERSCORE).run(ps, False)
+        except Fail:
+            next_name = Term(TT.IDENTIFIER, msg="Expected identifier or '_' in multi-assign").run(ps, True).lexeme
+        else:
+            next_name = None
         lvalues.append({"type": next_type, "name": next_name})
 
     Term(TT.ASSIGN_OP, msg="Expected '=' in multi-assign statement").run(ps, True)
@@ -1256,12 +1233,26 @@ GRAMMAR["global_var_decl"] = Rule(_global_var_decl_fn)
 
 
 def _param_fn(ps, committed):
-    """`param := type declarator_name` - a function parameter is a type
-    plus a declarator name, which lets a parameter itself be array-typed
-    (`int scores[5]`) via the same `merge_type` machinery declarations use."""
+    """`param := type declarator_name ('=' literal_value)?` - a function
+    parameter is a type plus a declarator name, which lets a parameter
+    itself be array-typed (`int scores[5]`) via the same `merge_type`
+    machinery declarations use. An optional trailing `= literal` gives it a
+    default value - restricted to a bare literal, the same restriction
+    `const` initializers have (see `_const_declarator_fn`), which sidesteps
+    any question of evaluation order or scope for the default expression.
+    Whether defaulted parameters must be trailing is a semantics.py concern
+    (`_collect_functions_and_const_globals`), not enforced here."""
     param_type = Ref("type", fail_msg="Expected type").run(ps, True)
     param_name = Ref("declarator_name").run(ps, True)
-    return Node("Param", {"name": param_name["name"], "type": merge_type(param_type, param_name)})
+    default = None
+    save = ps.pos
+    try:
+        Term(TT.ASSIGN_OP).run(ps, False)
+    except Fail:
+        ps.pos = save
+    else:
+        default = Ref("literal_value", fail_msg="Expected a literal value (int, float, char, string, or bool) as parameter default").run(ps, True)
+    return Node("Param", {"name": param_name["name"], "type": merge_type(param_type, param_name), "default": default})
 
 
 GRAMMAR["param"] = Rule(_param_fn)

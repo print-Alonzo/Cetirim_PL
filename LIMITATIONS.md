@@ -9,9 +9,12 @@ simply out of scope for this project. It's organized in three tiers:
    documented in `CLAUDE.md`. Listed here for completeness, with the
    reasoning restated.
 2. **Known gaps** — real edge cases discovered while building the pipeline
-   that aren't hardened against. None of these are hit by the 5 required
-   sample programs, which is exactly why they went unnoticed until reviewed
-   deliberately.
+   that weren't hardened against. A dedicated review pass closed every gap
+   that was here as of the last audit (each is now either a §1 design
+   decision or a fixed-and-tested behavior — see §2's table for exactly
+   what changed and which `tests/*.src` fixture exercises it); this section
+   is deliberately kept, and used as the place for whatever's found next
+   time.
 3. **Scope limitations** — things a "real" language/toolchain would have
    that this project never set out to build.
 
@@ -30,264 +33,61 @@ expectation differs.
 | Decision | Reasoning |
 |---|---|
 | `val`/`const` freeze the **binding**, not the contents | `prog2` bubble-sorts a `val int scores[5]` — only rebinding the name is rejected, element/field mutation is allowed |
-| `int / int` truncates toward zero (C-style) | Matches `prog1`'s existing behavior and is the more common convention for a C-influenced language |
+| `int / int` and `int % int` both use C-style **truncated** semantics | Matches `prog1`'s existing DIV behavior; `%`'s remainder now takes the sign of the *dividend* (not Python's floor-based `%`, which takes the sign of the divisor), the same truncation convention DIV already used — was an inconsistency (see the old "known gaps" entry below), closed by giving `MOD` its own explicit-zero-check truncating handler |
 | `..` ranges are inclusive | `for (i in 0..4)` visits all 5 elements of a 5-element array |
 | Arrays/structs are reference values; scalars are call-by-value | Falls out of storing them as native Python `list`/dict objects — not enforced by semantics.py, just a consequence of how the VM represents values |
-| First matching `catch` wins | Catch clauses carry no exception type, so there's no way to discriminate between them — see [§2](#multiple-catch-clauses-are-mostly-decorative) for what this actually means |
+| Only **one** `catch` clause is allowed per `try` | Catch clauses carry no exception type, so there was never a way to discriminate between multiple ones — `ir.py` used to just silently compile every clause after the first as dead code (see old §2 below); `semantics.py`'s `_analyze_try` now rejects a second clause as a hard `[SEMANTIC ERROR]` instead. The `catch_list → catch_clause catch_list` grammar production is unchanged (still demonstrable at the parse level, and still exercised by `tests/multi_catch_error.src`), only semantics enforces the limit. `prog3`/`prog4` were edited to drop their (dead) second clauses |
 | `+` is numeric only, no string concatenation operator | Interpolated strings (`` `{a} {b}` ``) are the concatenation mechanism |
 | `let` and `multi_assign` bindings are always mutable | Neither construct has a `val`/`const`-style marker in the grammar |
 | Numeric coercion is `char -> int -> float` only | Everything else (`int -> char`, `float -> int`, anything involving `string`/`bool`) must match exactly |
+| Semantic diagnostics have two severities: `[SEMANTIC ERROR]` (aborts) and `[SEMANTIC WARNING]` (reported, pipeline still runs) | Lets dead code (a statement after an unconditional `return`/`break`/`continue`/`throw` in the same block) and a duplicate `match` literal pattern be flagged without rejecting an otherwise-valid program — a full reachability/exhaustiveness analysis was judged out of scope, so this only catches the two shapes named above, not every dead-code shape a "real" compiler would |
+| Default parameter values must be **trailing** and a **bare literal** | Mirrors the existing rule that `const` initializers must be literals; sidesteps any question of evaluation order or scope for the default expression, and keeps "which parameters can be omitted" unambiguous from the signature alone |
+| The VM caps total executed quads (`--max-steps`, default 10,000,000) and call-stack depth (`--max-depth`, default 10,000); `0` disables either | Was previously unbounded — an infinite loop or infinite recursion would hang or grow memory without limit rather than failing with a diagnosable `[RUNTIME ERROR]`. Both caps are generous defaults meant to catch runaway bugs, not to constrain legitimate deep recursion or long-running loops |
 
 ---
 
 ## 2. Known gaps
 
-### Thrown values aren't required to be strings
+A review pass closed every gap that was previously documented here (each
+either became a §1 design decision with its own rationale, or was fixed
+outright and is now covered by a `tests/*.src` fixture — see the table
+below). One new gap was found in the process of closing the others and is
+recorded here in the same spirit: honestly, before it's found by someone
+else.
 
-The catch variable is typed `string` (`semantics.py`, `_analyze_try`), but
-`ThrowStmt`'s value is only type-*inferred*, never checked against
-`T_STRING`:
+| Former entry | Resolution |
+|---|---|
+| Thrown values aren't required to be strings | `throw` now type-checks its value against `T_STRING` (`semantics.py`'s `ThrowStmt` handling) — `tests/throw_type_error.src` |
+| `input()` into a non-scalar variable silently misbehaves | `input()` targets must now be a scalar type — `tests/input_array_error.src` |
+| Multiple `catch` clauses are mostly decorative | Now a hard semantic error instead of silent dead code — see §1's "Only one `catch` clause" row, `tests/multi_catch_error.src` |
+| Named arguments require covering every parameter | Default parameter values (trailing, literal-only) let a call omit them — see §1, `tests/default_params.src` |
+| Destructuring can't discard a value | `_` is now a valid discard slot in `let`/`multi_assign` — `tests/discard.src` |
+| Match "predicate pattern" detection is a shape heuristic | Replaced with a real type-based decision (`node_is_predicate`, set once by `semantics.py`, read by `ir.py`) — `prog4` still passes byte-identical, and the case the heuristic couldn't express (equality-comparing a subject against a bool-valued sub-expression) now works |
+| `MOD` doesn't get the same C-style treatment as `DIV` | Both are now truncated (C-style) with explicit zero checks — see §1 |
+| `ARR_NEW` has no negative-size guard, but was unreachable | Guard added, and dynamic array sizes (below) made it reachable — `tests/dynamic_array.src` exercises the array; a negative dynamic size hits the guard directly |
+| No "all paths return a value" checking | Now a hard semantic error — `tests/missing_return_error.src` |
+| No dead-code / unreachable-pattern detection | Now a `[SEMANTIC WARNING]` for a statement after an unconditional terminator, and for a duplicate `match` literal pattern — see §1's warning-tier row |
+| Interpolated-string edge cases (`\{`, nested-quote brace confusion) | Splitting moved into the scanner, the only place that still knows which braces came from an escape and which characters are inside a nested string — `tests/interp_edge_cases.src` |
+| Comparing two one-character strings can silently become a char comparison | The runtime `_numeric()` ordinal-promotion hack is gone; `ir.py` now promotes `char` operands explicitly (via `node_type`, at compile time), so a `string`-vs-`string` comparison is never touched — `tests/string_comparison.src` |
+| Runtime error line numbers are per-statement, not per-sub-expression | `ir.py`'s `_gen_expr` now stamps each quad with its own sub-expression's line — `tests/div_by_zero.src`'s division is deliberately on its own line inside a multi-line expression to pin this |
+| Dynamically-sized arrays without an initializer aren't supported | `int arr[n];` now computes `ARR_NEW`'s size at runtime when `n` isn't a compile-time literal — `tests/dynamic_array.src` |
+| No protection against runaway recursion or infinite loops | The VM now caps total executed quads (`--max-steps`) and call-stack depth (`--max-depth`) — see §1, `tests/infinite_recursion.src` |
+| Struct/array literal-init and equality untested by the 5 required programs | `tests/struct_array_init.src` now exercises both |
 
-```python
-elif kind == "ThrowStmt":
-    self._infer_expr(node.fields["value"])   # no can_coerce(..., T_STRING) check
-```
+### `match` expression used as a bare assignment/call-argument value hangs the parser
 
-`throw 42;` passes semantic analysis. At runtime it works "fine" in the
-sense that Python doesn't crash — `CATCH_STORE` just stores whatever value
-`current_exception` holds — but the catch variable's *declared* type (string)
-no longer matches what's actually in it, and downstream string operations on
-it (e.g. interpolating it into a message) would just stringify the int,
-silently papering over the mismatch rather than flagging it.
-
-### `input()` into a non-scalar variable silently misbehaves
-
-`_analyze_builtin`'s check for `input()` targets only verifies the argument
-is a plain, mutable identifier — it never restricts the target's *type*:
-
-```python
-for a in node.fields["args"]:
-    if a.kind != "Identifier":
-        self.error(a, "input() arguments must be plain variable names")
-        continue
-    self._infer_expr(a)
-    sym = self.st.node_symbol.get(id(a))
-    if isinstance(sym, Symbol) and not sym.mutable:
-        self.error(a, f"Cannot input() into immutable variable '{sym.name}'")
-```
-
-So `input(myArray)` or `input(myStruct)` passes semantic analysis. At
-runtime, `IRExecutor._coerce()` looks up the type tag (`"array"` / `"struct"`),
-doesn't recognize it, and falls through to its default branch — the raw text
-token gets stored as a plain string, silently overwriting the array/struct
-with a string value instead of raising an error.
-
-### Multiple `catch` clauses are mostly decorative
-
-Because catch clauses carry no exception type, `ir.py`'s `gen_try` only ever
-lowers `catch_clauses[0]` — every subsequent clause is still walked and
-type-checked by `semantics.py`, but its compiled code is never emitted, so
-it's permanently dead. A program with `catch (e) {...} catch (special) {...}`
-will *never* run the second block, regardless of what's thrown or what a
-reader might reasonably expect from the syntax. This is consistent with
-`prog3`/`prog4`'s actual observed behavior, but is worth knowing explicitly
-before writing a new test program that depends on selective catch dispatch.
-
-### Named arguments require covering every parameter
-
-`_infer_call` requires a named call to supply *all* parameters by name, with
-no positional/named mixing and no default values:
-
-```python
-if len(named) != len(args):
-    self.error(node, "Cannot mix positional and named arguments in a call")
-...
-missing = [p for p in sig.param_names if p not in provided]
-if missing:
-    self.error(node, f"Missing argument(s) for parameter(s): {', '.join(missing)}")
-```
-
-There's no language feature for default parameter values, so this isn't
-wrong per se, but it means named arguments are really just "positional
-arguments written in a different order," not a partial-application
-mechanism.
-
-### Destructuring can't discard a value
-
-`let`/`multi_assign` always bind every position to a name — there's no
-wildcard (`_`) form for `let a, _ = pair();` the way `match` has one for
-patterns. If you only care about one of several return values, you still
-have to name (and declare) all of them.
-
-### Match "predicate pattern" detection is a shape heuristic, not a real distinction
-
-A match arm's pattern is treated as an independent boolean predicate
-(evaluated on its own, *not* compared to the subject) whenever its AST's
-**top node** is a relational/logical `BinaryExpr` or a `!`-`UnaryExpr`:
-
-```python
-def _is_predicate_pattern(self, pattern):
-    if pattern.kind == "BinaryExpr" and pattern.fields.get("op") in _PREDICATE_BINOPS:
-        return True
-    return pattern.kind == "UnaryExpr" and pattern.fields.get("op") == "!"
-```
-
-This correctly handles `code > 9 =>` (`prog4`), but it also means there is
-**no way to write a match pattern that equality-compares the subject against
-a boolean-valued sub-expression** — any pattern whose outermost operator is
-`==`, `!=`, `<`, `>`, `<=`, `>=`, `&&`, `||`, or `!` is always treated as
-"evaluate me directly," never "compare me to the subject." This is an
-AST-shape heuristic standing in for a real type-based distinction, and it's
-the kind of thing a more adversarial test case could expose.
-
-### `MOD` doesn't get the same C-style treatment as `DIV`
-
-Integer division truncates toward zero (assumption in §1), but modulo uses
-plain Python `%`, which is **floor-based** (result takes the sign of the
-divisor), not C's truncated modulo (result takes the sign of the dividend):
-
-```python
-BINARY_OPS = {
-    ..., "DIV": _div, "MOD": operator.mod, ...
-}
-```
-
-For non-negative operands (everything the 5 sample programs use) these
-agree. For negative operands they diverge — e.g. `-7 % 3` is `2` here
-(Python/floor semantics) but would be `-1` under C's truncated semantics.
-This inconsistency (DIV is C-style, MOD is not) was a deliberate scope call
-during Phase D, not something anyone asked to be fixed.
-
-### `ARR_NEW`'s VM handler has no negative-size guard of its own — but it's currently unreachable
-
-```python
-elif op == "ARR_NEW":
-    size = self.resolve(q.arg1)
-    self.set_var(q.result, [DEFAULTS.get(q.arg2)] * size)
-```
-
-Python's list repetition silently treats a negative multiplier as zero, so
-*if* a negative size ever reached this quad, it would produce a silent
-empty array rather than an error. In practice this isn't reachable through
-`ir.py` as written: a literal size like `arr[-1]` parses as `UnaryExpr(-,
-Literal(1))`, not a bare `INTEGER_LIT`, so `_const_int_or_none` never
-returns a negative value; every `ARR_NEW` emitted from a literal-size
-declaration gets a non-negative `Const`, and a non-literal size with no
-initializer is rejected at compile time (see below) before it ever reaches
-`ARR_NEW`. Worth knowing about only because the VM opcode itself doesn't
-enforce the invariant — it's relying on `ir.py` never generating a bad
-call, which is a coupling worth being aware of if either file changes
-independently later.
-
-### No "all paths return a value" checking
-
-A non-`void` function that doesn't actually return on every code path (e.g.
-an `if` with no `else`, where only the `if`-branch returns) is not flagged
-as a semantic error. `ir.py` always emits an implicit fallthrough `RETURN`
-(no value) at the end of every function body, so a caller silently receives
-Python's `None`:
-
-```c
-int maybe(bool flag) {
-    if (flag) { return 1; }
-    // no else, no trailing return
-}
-```
-
-Calling `maybe(false)` and printing the result prints the literal text
-`None` — confirmed by running it — rather than a semantic error at compile
-time or a clear runtime diagnosis. It only surfaces indirectly, e.g. as a
-`TypeError` the next time that `None` is used in arithmetic (converted to a
-generic `[RUNTIME ERROR]`, not a "missing return" message).
-
-### No dead-code / unreachable-pattern detection
-
-- Code after a `return`/`break`/`continue`/`throw` within the same block is
-  silently compiled and simply never reached — not flagged.
-- Two `match` arms with the same literal pattern (e.g. `0 => a; 0 => b;`)
-  aren't flagged as a duplicate; the second is just permanently unreachable.
-  (The grammar *does* catch the one case explicitly mentioned in the spec —
-  a case appearing after the wildcard `_` — but that's a parser-level check,
-  not a general reachability analysis.)
-
-### Interpolated-string edge cases
-
-- **`\{` can't escape a literal brace.** The scanner resolves escape
-  sequences before the interpolation splitter (`grammar.py`) ever sees the
-  string, so by the time splitting happens there's no way to tell "a literal
-  backslash followed by a brace" apart from "an escaped brace."
-- **The brace-matching for `{expr}` is a naive character-level depth
-  counter**, not token-aware. An embedded expression that itself contains a
-  string literal with a `}` or `{` inside it (e.g. `` `{f("}")}` ``) will
-  confuse the splitter, since it doesn't know it's inside a nested string
-  literal when counting braces.
-
-### Comparing two one-character strings can silently become a char comparison
-
-`_numeric()` promotes any length-1 Python string to its ordinal so that
-`char`-vs-`int`/`float` comparisons work (this is required — `semantics.py`
-explicitly permits char/numeric cross-comparisons). But at the VM level, a
-`char` value and a genuine length-1 `string` value are the *same* Python
-object shape (`isinstance(value, str) and len(value) == 1`), so:
-
-```python
-def _numeric(value):
-    return ord(value) if isinstance(value, str) and len(value) == 1 else value
-```
-
-comparing two one-character *strings* with `==`, `<`, etc. gets silently
-routed through the same ordinal-promotion path as a char comparison, instead
-of a plain string comparison. None of the 5 sample programs ever compare
-strings with relational/equality operators, so this has never surfaced.
-
-### Runtime error line numbers are per-statement, not per-sub-expression
-
-`ir.py` stamps every quad with `self._current_line`, which is updated once
-per statement (`gen_stmt`) — not for every individual sub-expression inside
-it. A division-by-zero buried inside a long compound expression will report
-the line of the *enclosing statement*, which is usually good enough but
-isn't pinpoint-accurate for a statement that spans (or is built from
-sub-expressions on) multiple lines.
-
-### Dynamically-sized arrays without an initializer aren't supported
-
-The grammar allows an arbitrary expression as an array size (`int arr[n];`),
-but `ir.py` only knows how to zero-fill an array at declaration time when the
-size is a literal integer known at compile time:
-
-```python
-size = type_[2]
-if size is None:
-    raise IRGenError(f"Array '{sym.name}' needs an explicit size or initializer")
-```
-
-A variable-length array with no initializer list raises a compile-time
-`IRGenError` rather than allocating at runtime based on the variable's value.
-(An array *with* an initializer list works regardless, since its size comes
-from the list's length instead.)
-
-### No protection against runaway recursion or infinite loops
-
-The VM's `run()` is a flat `while` loop — `CALL`/`RETURN` just push/pop
-`self.call_stack` (a plain Python list) rather than making a real recursive
-Python function call, so a deeply-recursive *source* program doesn't blow
-Python's own call stack the way a naive tree-walking interpreter would.
-That's a nice property, but it also means there's no cap at all: an
-infinite-recursion or infinite-loop bug in a test program will hang or grow
-`call_stack` until the process runs out of memory, rather than failing with
-a clean "stack overflow" or "timeout" diagnostic.
-
-### Struct/array literal-initialization and equality are implemented but untested by the 5 required programs
-
-- `_check_initializer_list`'s struct branch (positional field initialization
-  from `{val1, val2, ...}`, mapped in `field_order`) is implemented
-  generically, but no sample program initializes a struct with a brace list
-  — `prog4` only ever assigns struct fields individually (`s1.name = ...`).
-- Comparing two structs or two arrays with `==`/`!=` type-checks fine
-  (`types_equal` allows it) and works at runtime via Python's native
-  dict/list structural equality — but this is an emergent property of the
-  implementation, not a deliberately designed and tested language feature,
-  and it isn't exercised anywhere in the sample programs.
+Discovered while testing the interpolated-string fix above (a `match`
+expression embedded inside `` `{...}` `` triggered it, but it isn't specific
+to interpolation — it reproduces identically with no interpolation involved,
+e.g. `result = match (x) { x > 5 => "big"; _ => "small"; };` as a plain
+statement). Confirmed present on the pre-existing code at the start of this
+session (via `git stash`), so it predates every change in this document —
+this is a newly-*documented* gap, not a newly-introduced one, and fixing it
+was outside this session's scope. Whatever's driving it lives somewhere in
+the `match_expression`/`statement`-level grammar interaction (possibly the
+statement-level `Alt` retrying `match_stmt` then `expr_stmt`, each of which
+tries to parse the same `match` keyword, in a way `many_rec`'s error
+recovery doesn't terminate on) — not yet root-caused.
 
 ---
 

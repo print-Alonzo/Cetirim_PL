@@ -31,6 +31,7 @@ project's design assumptions, for free.
 """
 
 import argparse
+import math
 import operator
 import sys
 
@@ -80,35 +81,44 @@ class StructValue(dict):
         self.type_name = type_name
 
 
-def _numeric(value):
-    """Promote a char (a 1-character Python str) to its ordinal so it can
-    take part in arithmetic/relational ops. Known limitation: a genuine
-    1-character *string* value is indistinguishable from a char at this
-    point and gets promoted the same way - harmless for every program in
-    this project (string values are never arithmetically/relationally
-    compared), but worth knowing about."""
-    return ord(value) if isinstance(value, str) and len(value) == 1 else value
-
-
 def _div(a, b):
     """DIV handler: `int / int` truncates toward zero (C-style), matching
-    the language design decision in CLAUDE.md. Contrast with `MOD` right
-    below, which is deliberately *not* given this same treatment."""
-    # C-style truncating division: int/int -> int, truncated toward zero.
-    return a / b if isinstance(a, float) or isinstance(b, float) else int(a / b)
+    the language design decision in CLAUDE.md. Raises an explicit
+    `ZeroDivisionError` with a fixed message rather than letting Python's
+    own division raise one, since that message's wording is Python-version-
+    dependent. The int path uses `//` with a sign correction instead of
+    `int(a / b)`, which round-trips through a float and both loses
+    precision on large ints and can raise an uncaught `OverflowError`."""
+    if b == 0:
+        raise ZeroDivisionError("Division by zero")
+    if isinstance(a, float) or isinstance(b, float):
+        return a / b
+    q = a // b
+    if q < 0 and q * b != a:
+        q += 1  # // floors; truncate toward zero instead, C-style
+    return q
+
+
+def _mod(a, b):
+    """MOD handler: truncated (C-style) modulo, matching `_div`'s
+    truncated division - the result takes the sign of the dividend, unlike
+    Python's `%` which is floor-based and takes the sign of the divisor.
+    Same explicit zero check and fixed message as `_div`."""
+    if b == 0:
+        raise ZeroDivisionError("Modulo by zero")
+    if isinstance(a, float) or isinstance(b, float):
+        return math.fmod(a, b)
+    r = a % b
+    if r != 0 and (r < 0) != (a < 0):
+        r -= b
+    return r
 
 
 BINARY_OPS = {
-    "ADD": operator.add, "SUB": operator.sub, "MUL": operator.mul, "DIV": _div, "MOD": operator.mod,
+    "ADD": operator.add, "SUB": operator.sub, "MUL": operator.mul, "DIV": _div, "MOD": _mod,
     "EQ": operator.eq, "NE": operator.ne, "LT": operator.lt, "GT": operator.gt,
     "LE": operator.le, "GE": operator.ge,
 }
-ARITH_OPCODES = {"ADD", "SUB", "MUL", "DIV", "MOD"}
-# Note MOD is plain Python `%` here (floor-based, sign follows the divisor),
-# NOT given the same C-style truncation _div gives DIV - a deliberate,
-# accepted inconsistency for negative operands (see LIMITATIONS.md); it only
-# matters for negative operands, which none of the sample programs exercise.
-NUMERIC_PROMOTE_OPCODES = ARITH_OPCODES | {"LT", "GT", "LE", "GE", "EQ", "NE"}
 UNARY_OPS = {"UMINUS": operator.neg, "UPLUS": lambda v: v, "NOT": operator.not_}
 
 # Python exceptions a malformed-at-runtime program can trigger (bad array
@@ -122,12 +132,15 @@ class IRExecutor:
     """Executes one `(quads, functions, var_types, structs)` program to
     completion (or until a runtime error/uncaught exception aborts it)."""
 
-    def __init__(self, quads, functions, var_types, structs, trace=False):
+    def __init__(self, quads, functions, var_types, structs, trace=False, max_steps=10_000_000, max_depth=10_000):
         self.quads = quads
         self.functions = functions
         self.var_types = var_types
         self.structs = structs
         self.trace = trace
+        # 0 means unlimited for both - see main()'s --max-steps/--max-depth.
+        self.max_steps = max_steps
+        self.max_depth = max_depth
         # Every LABEL's quad index is resolved exactly once, up front, so
         # JMP/JZ/JNZ during execution are an O(1) dict lookup rather than a
         # linear scan for the matching label each time a jump happens.
@@ -140,7 +153,14 @@ class IRExecutor:
         outermost loop, and re-raised as a `RuntimeVMError` carrying the
         currently-executing quad's source line - this is the only place a
         raw Python exception from a malformed program gets translated into
-        the clean `[RUNTIME ERROR]` reporting `main()` prints."""
+        the clean `[RUNTIME ERROR]` reporting `main()` prints.
+
+        `steps` is a plain local (not `self.steps`) so counting it costs no
+        attribute lookup per quad - the VM's own `while` loop is otherwise
+        a flat dispatch with no other per-iteration bookkeeping. It's the
+        only cap against an infinite loop; `_call`'s recursion-depth check
+        is the corresponding cap against unbounded recursion (see
+        LIMITATIONS.md - previously there was no cap on either)."""
         self.globals = {}
         self.call_stack = []  # (return_pc, result_temp, caller_frame)
         self.exception_handlers = []  # (handler_pc, frame, call_stack_depth)
@@ -151,7 +171,11 @@ class IRExecutor:
         self.pc = 0
 
         try:
+            steps = 0
             while self.pc < len(self.quads):
+                if self.max_steps and steps >= self.max_steps:
+                    self._runtime_error(f"Exceeded maximum step count ({self.max_steps}) - possible infinite loop")
+                steps += 1
                 q = self.quads[self.pc]
                 if self.trace:
                     print(f"{self.pc:04d}: {q}", file=sys.stderr)
@@ -190,14 +214,10 @@ class IRExecutor:
         # -- arithmetic / relational / logical --
         elif op in BINARY_OPS:
             left, right = self.resolve(q.arg1), self.resolve(q.arg2)
-            if op in NUMERIC_PROMOTE_OPCODES:
-                left, right = _numeric(left), _numeric(right)
             self.set_var(q.result, BINARY_OPS[op](left, right))
             self.pc += 1
         elif op in UNARY_OPS:
             value = self.resolve(q.arg1)
-            if op != "NOT":
-                value = _numeric(value)
             self.set_var(q.result, UNARY_OPS[op](value))
             self.pc += 1
 
@@ -226,6 +246,8 @@ class IRExecutor:
         # -- arrays --
         elif op == "ARR_NEW":
             size = self.resolve(q.arg1)
+            if size < 0:
+                self._runtime_error(f"Array size cannot be negative (got {size})")
             self.set_var(q.result, [DEFAULTS.get(q.arg2)] * size)
             self.pc += 1
         elif op == "ARR_LOAD":
@@ -357,6 +379,8 @@ class IRExecutor:
         zipped with the popped argument values, and jump to its entry
         point."""
         name, argcount, result_temp = q.arg1, q.arg2, q.result
+        if self.max_depth and len(self.call_stack) >= self.max_depth:
+            self._runtime_error(f"Exceeded maximum call depth ({self.max_depth}) - possible infinite recursion")
         args = self.pending_args[len(self.pending_args) - argcount:] if argcount else []
         if argcount:
             del self.pending_args[len(self.pending_args) - argcount:]
@@ -386,13 +410,16 @@ class IRExecutor:
         (built by TUPLE_NEW/TUPLE_APPEND, or handed back from a multi-return
         call) out into several named slots at once - a length mismatch is a
         runtime error, not a silent truncate/pad, since semantics.py can't
-        always prove arity statically for every call shape."""
+        always prove arity statically for every call shape. A `None` in
+        `names` is a `_` discard slot (see ir.py's `_gen_destructure`) -
+        still counted for the arity check, just not written anywhere."""
         values = self.resolve(q.arg1)
         names = q.result
         if len(values) != len(names):
             self._runtime_error(f"Expected {len(names)} value(s) from unpacking, got {len(values)}")
         for name, v in zip(names, values):
-            self.set_var(name, v)
+            if name is not None:
+                self.set_var(name, v)
 
     def _unwind(self):
         """Shared by `THROW` and `RETHROW`: pop the nearest still-registered
@@ -507,6 +534,8 @@ def main():
     cli.add_argument("--ir", action="store_true", help="Print the generated intermediate code (quadruples) before running")
     cli.add_argument("--symbols", action="store_true", help="Print function/struct/variable metadata before running")
     cli.add_argument("--trace", action="store_true", help="Print each quad to stderr as it executes")
+    cli.add_argument("--max-steps", type=int, default=10_000_000, help="Abort with a runtime error after this many executed quads (0 = unlimited)")
+    cli.add_argument("--max-depth", type=int, default=10_000, help="Abort with a runtime error past this call-stack depth (0 = unlimited)")
     args = cli.parse_args()
 
     try:
@@ -528,7 +557,8 @@ def main():
     if sem_errors:
         for err in sem_errors:
             print(err, file=sys.stderr)
-        sys.exit(2)
+        if any(err.severity == "ERROR" for err in sem_errors):
+            sys.exit(2)
 
     try:
         quads, functions, var_types, structs = generate(ast, symtab)
@@ -548,7 +578,8 @@ def main():
         print()
 
     try:
-        IRExecutor(quads, functions, var_types, structs, trace=args.trace).run()
+        IRExecutor(quads, functions, var_types, structs, trace=args.trace,
+                   max_steps=args.max_steps, max_depth=args.max_depth).run()
     except RuntimeVMError as e:
         loc = f"Line {e.line}: " if e.line is not None else ""
         print(f"[RUNTIME ERROR] {loc}{e}", file=sys.stderr)

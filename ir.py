@@ -60,7 +60,7 @@ from typing import Any
 
 from ast_nodes import Node
 from parser import parse_source
-from semantics import analyze
+from semantics import T_CHAR, analyze
 
 DEFAULTS = {"int": 0, "float": 0.0, "bool": False, "string": "", "char": "\0"}
 
@@ -70,7 +70,8 @@ BINARY_OPCODE = {
 }
 UNARY_OPCODE = {"-": "UMINUS", "+": "UPLUS", "!": "NOT"}
 
-_PREDICATE_BINOPS = {"<", ">", "<=", ">=", "==", "!=", "&&", "||"}
+_ARITHMETIC_BINOPS = {"+", "-", "*", "/", "%"}
+_COMPARISON_BINOPS = {"==", "!=", "<", ">", "<=", ">="}
 
 
 class IRGenError(Exception):
@@ -114,15 +115,18 @@ def _fmt(operand):
     """Render one quad operand for display: unwrap a `Const`'s value
     (rendering bools as the language's own `true`/`false` spelling rather
     than Python's `True`/`False`), join a tuple of names with commas (used
-    by e.g. `INPUT`'s multi-target result), or just `str()` a plain name -
-    `None` prints as `-` to keep the quad table readable."""
+    by e.g. `INPUT`'s multi-target result, or `UNPACK`'s - where a `None`
+    entry is a `_` discard slot, rendered as `_` rather than Python's
+    `None` to match the source syntax that produced it), or just `str()` a
+    plain name - a bare `None` prints as `-` to keep the quad table
+    readable."""
     if operand is None:
         return "-"
     if isinstance(operand, Const):
         v = operand.value
         return ("true" if v else "false") if isinstance(v, bool) else str(v)
     if isinstance(operand, tuple):
-        return "(" + ", ".join(str(x) for x in operand) + ")"
+        return "(" + ", ".join("_" if x is None else str(x) for x in operand) + ")"
     return str(operand)
 
 
@@ -298,24 +302,27 @@ class IRGenerator:
             self._current_line = declarator.line
             sym = self.st.node_symbol[id(declarator)]
             self.var_types[sym.ir_name] = self._type_tag(sym.type)
-            self._gen_declare(sym, declarator.fields["initializer"])
+            self._gen_declare(sym, declarator.fields["initializer"], declarator.fields["type"])
 
-    def _gen_declare(self, sym, init):
+    def _gen_declare(self, sym, init, type_node=None):
         """Branch a single declarator's initialization by its type: arrays
         and structs need their own multi-quad construction sequences
         (`ARR_NEW`/`STRUCT_NEW` plus per-element/per-field stores); a plain
         scalar is just one `ASSIGN` of either its (possibly coerced)
-        initializer or a type-appropriate default value."""
+        initializer or a type-appropriate default value. `type_node` is the
+        declarator's original parsed type (only needed by the array branch,
+        to recover a non-literal size expression - see
+        `_gen_array_declare`)."""
         type_ = sym.type
         if type_[0] == "array":
-            self._gen_array_declare(sym, type_, init)
+            self._gen_array_declare(sym, type_, init, type_node)
         elif type_[0] == "struct":
             self._gen_struct_declare(sym, type_, init)
         else:
             value = self._gen_expr_coerced(init) if init is not None else self._default_const(type_)
             self.emit("ASSIGN", value, None, sym.ir_name)
 
-    def _gen_array_declare(self, sym, type_, init):
+    def _gen_array_declare(self, sym, type_, init, type_node=None):
         """Emit an array declaration. Two shapes:
 
           - `{v1, v2, ...}` initializer list: `ARR_NEW` sized to the list's
@@ -328,10 +335,15 @@ class IRGenerator:
             just `ASSIGN`ed directly (aliasing the same underlying Python
             list - see interpreter.py's module docstring on arrays being
             reference values), or, with no initializer at all, `ARR_NEW`
-            zero-fills to the declared literal size (raising `IRGenError`
-            if that size isn't known at compile time - see
-            LIMITATIONS.md's "dynamically-sized arrays without an
-            initializer aren't supported").
+            zero-fills to the declared size - a literal size becomes a
+            `Const` operand as before; a non-literal size (`type_[2] is
+            None`, e.g. `int arr[n];`) is instead recovered from
+            `type_node` (the original `ArrayType` node - `sym.type`'s own
+            size was already const-folded to `None` by semantics.py) and
+            generated into a temp, so `ARR_NEW`'s size operand is computed
+            at runtime. `int arr[];` (no size expression at all, and no
+            initializer) still has nothing to size it from and stays an
+            `IRGenError`.
         """
         elem_type = type_[1]
         elem_tag = self._type_tag(elem_type)
@@ -344,9 +356,13 @@ class IRGenerator:
             self.emit("ASSIGN", self._gen_expr(init), None, sym.ir_name)
         else:
             size = type_[2]
-            if size is None:
+            if size is not None:
+                size_operand = Const(size)
+            elif type_node is not None and type_node.kind == "ArrayType" and type_node.fields.get("size") is not None:
+                size_operand = self._gen_expr(type_node.fields["size"])
+            else:
                 raise IRGenError(f"Array '{sym.name}' needs an explicit size or initializer")
-            self.emit("ARR_NEW", Const(size), elem_tag, sym.ir_name)
+            self.emit("ARR_NEW", size_operand, elem_tag, sym.ir_name)
 
     def _gen_struct_declare(self, sym, type_, init):
         """Emit a struct declaration: `STRUCT_NEW` always runs first
@@ -394,15 +410,26 @@ class IRGenerator:
             in one step.
           - otherwise (equal counts): one plain `ASSIGN` per name/value
             pair, each individually coerced if semantics.py flagged one.
+
+        A `None` entry in `symbols` (a `_` discard slot - semantics.py
+        never declares a symbol for one) has no `var_types` entry and no
+        destination: its value is still generated (and so still evaluated,
+        for side effects), just never stored anywhere. The UNPACK shape
+        keeps `None` in the target tuple at that position so `interpreter.py`'s
+        `_unpack` can skip only that one slot positionally.
         """
         for sym in symbols:
-            self.var_types[sym.ir_name] = self._type_tag(sym.type)
+            if sym is not None:
+                self.var_types[sym.ir_name] = self._type_tag(sym.type)
         if len(values) == 1 and len(symbols) > 1:
             value = self._gen_expr(values[0])
-            self.emit("UNPACK", value, None, tuple(s.ir_name for s in symbols))
+            names = tuple(s.ir_name if s is not None else None for s in symbols)
+            self.emit("UNPACK", value, None, names)
         else:
             for sym, v in zip(symbols, values):
-                self.emit("ASSIGN", self._gen_expr_coerced(v), None, sym.ir_name)
+                value = self._gen_expr_coerced(v)
+                if sym is not None:
+                    self.emit("ASSIGN", value, None, sym.ir_name)
 
     # -- statements --------------------------------------------------------
 
@@ -752,9 +779,10 @@ class IRGenerator:
             LABEL Lfin_normal
             <fin>                      # copy #2: runs after either a clean body or a handled catch
 
-        Catch clauses carry no exception type, so `ir.py` only lowers
-        `catch_clauses[0]` - later clauses were still type-checked by
-        semantics.py, but are permanently dead code (see LIMITATIONS.md).
+        Catch clauses carry no exception type, so only one is ever
+        semantically meaningful - `semantics.py`'s `_analyze_try` rejects a
+        `TryStmt` with more than one `catch` clause, so by the time this
+        runs `catch_clauses` always has exactly one entry.
         """
         catch = node.fields["catch_clauses"][0]
         finally_body = node.fields["finally_body"]
@@ -839,13 +867,15 @@ class IRGenerator:
         """Emits code that falls through if `pattern` matches `subject`, or
         jumps to `fail_label` if it doesn't.
 
-        Dispatches by pattern *shape*, mirroring semantics.py's
+        Dispatches by pattern shape, mirroring semantics.py's
         `_analyze_pattern`: wildcard always falls through (no code at
         all); a `RangeExpr` becomes an inclusive `GE`-then-`LE` pair against
         the range's own start/end (either check failing jumps away); a
-        "predicate" pattern (see `_is_predicate_pattern`) is evaluated
-        directly as its own boolean, *ignoring* `subject` entirely; anything
-        else falls back to a plain `EQ` against `subject`.
+        "predicate" pattern - a real type-based decision, recorded by
+        `_analyze_pattern` in `node_is_predicate` rather than re-derived
+        from AST shape here - is evaluated directly as its own boolean,
+        *ignoring* `subject` entirely; anything else falls back to a plain
+        `EQ` against `subject`.
         """
         if pattern.kind == "WildcardPattern":
             return
@@ -857,26 +887,12 @@ class IRGenerator:
             self.emit("LE", subject, self._gen_expr(pattern.fields["end"]), le_t)
             self.emit("JZ", le_t, None, fail_label)
             return
-        if self._is_predicate_pattern(pattern):
+        if self.st.node_is_predicate.get(id(pattern)):
             self.emit("JZ", self._gen_expr(pattern), None, fail_label)
             return
         eq_t = self.new_temp()
         self.emit("EQ", subject, self._gen_expr(pattern), eq_t)
         self.emit("JZ", eq_t, None, fail_label)
-
-    @staticmethod
-    def _is_predicate_pattern(pattern):
-        """Same shape heuristic as semantics.py's `_analyze_pattern`: a
-        pattern is treated as a standalone predicate (evaluated on its own,
-        never compared to the subject) whenever its outermost node is a
-        relational/logical `BinaryExpr` or a `!` `UnaryExpr`. This must stay
-        in exact lockstep with semantics.py's version of the same check -
-        if they ever disagreed, a pattern could be type-checked as one kind
-        and lowered as the other. See LIMITATIONS.md for what this
-        AST-shape heuristic can't express."""
-        if pattern.kind == "BinaryExpr" and pattern.fields.get("op") in _PREDICATE_BINOPS:
-            return True
-        return pattern.kind == "UnaryExpr" and pattern.fields.get("op") == "!"
 
     # -- expressions ---------------------------------------------------------
 
@@ -898,9 +914,27 @@ class IRGenerator:
 
     def _gen_expr(self, node):
         """Generate one expression node's value (never applying a
-        coercion - see `_gen_expr_coerced` for that), dispatching by
-        `kind`. Returns whatever operand (a `Const`, a variable/temp name)
-        holds the resulting value."""
+        coercion - see `_gen_expr_coerced` for that). Wraps
+        `_gen_expr_dispatch` with a save/set/restore of
+        `self._current_line`, so a quad emitted for a sub-expression
+        (e.g. the right operand of a `/` buried in a multi-line compound
+        expression) gets stamped with *that sub-expression's own* line
+        rather than inheriting whatever statement-level line `gen_stmt`
+        last set - unlike declarations/statements, which stay at
+        statement granularity (see the module docstring)."""
+        prev_line = self._current_line
+        if node.line is not None:
+            self._current_line = node.line
+        try:
+            return self._gen_expr_dispatch(node)
+        finally:
+            self._current_line = prev_line
+
+    def _gen_expr_dispatch(self, node):
+        """The actual `_gen_expr` dispatch by `kind`, split out from
+        `_gen_expr` so the line-tracking wrapper doesn't have to re-indent
+        the whole dispatch body. Returns whatever operand (a `Const`, a
+        variable/temp name) holds the resulting value."""
         kind = node.kind
 
         if kind == "Literal":
@@ -912,9 +946,14 @@ class IRGenerator:
         if kind == "InterpString":
             return self._gen_interp_string(node)
         if kind == "UnaryExpr":
-            operand = self._gen_expr(node.fields["operand"])
+            op = node.fields["op"]
+            operand_node = node.fields["operand"]
+            if op in ("-", "+"):
+                operand = self._gen_char_promoted(operand_node)
+            else:
+                operand = self._gen_expr(operand_node)
             t = self.new_temp()
-            self.emit(UNARY_OPCODE[node.fields["op"]], operand, None, t)
+            self.emit(UNARY_OPCODE[op], operand, None, t)
             return t
         if kind == "BinaryExpr":
             return self._gen_binary(node)
@@ -945,19 +984,58 @@ class IRGenerator:
 
         raise IRGenError(f"Expression not supported: {kind}")
 
+    def _gen_char_promoted(self, ast_node):
+        """Generate `ast_node`'s value, then - if semantics.py inferred it
+        as `char` - wrap it in an explicit `CAST -> "int"`. A `char` and a
+        genuine length-1 `string` are the same Python object shape at
+        runtime (both a 1-character str), so interpreter.py can no longer
+        tell them apart the way it used to (it previously auto-promoted
+        any length-1 string via `_numeric`, which meant two `string`
+        values also got silently ordinal-compared - see LIMITATIONS.md).
+        Deciding the promotion here, from `node_type` - the one place that
+        actually knows which operands are `char` - is what lets that
+        runtime guesswork be removed entirely."""
+        value = self._gen_expr(ast_node)
+        if self.st.node_type.get(id(ast_node)) == T_CHAR:
+            t = self.new_temp()
+            self.emit("CAST", value, "int", t)
+            return t
+        return value
+
     def _gen_binary(self, node):
         """`&&`/`||` are diverted to `_gen_short_circuit` (they lower to
         jumps, not a plain opcode - see that method); every other binary
-        operator generates both operands unconditionally, then one opcode
-        from `BINARY_OPCODE` mapping the source operator to its quad
-        mnemonic (e.g. `+` -> `ADD`)."""
+        operator generates both operands, then one opcode from
+        `BINARY_OPCODE` mapping the source operator to its quad mnemonic
+        (e.g. `+` -> `ADD`).
+
+        `char` operands are promoted to `int` via `_gen_char_promoted`
+        before the opcode is emitted - unconditionally for arithmetic
+        (`arithmetic_result` in semantics.py never allows a non-numeric
+        operand, so both sides are already known-numeric), but only when
+        the *other* side is `int`/`float` for comparisons: a `char`
+        compared against another `char` is left as the raw 1-character
+        strings, since Python's string ordering already agrees with
+        ordinal ordering for length-1 strings - promoting neither side
+        there is what keeps a real `string`-vs-`string` comparison
+        (impossible for two `char`s to be confused with) untouched."""
         op = node.fields["op"]
         if op == "&&":
             return self._gen_short_circuit(node, is_and=True)
         if op == "||":
             return self._gen_short_circuit(node, is_and=False)
-        left = self._gen_expr(node.fields["left"])
-        right = self._gen_expr(node.fields["right"])
+        left_node, right_node = node.fields["left"], node.fields["right"]
+        if op in _ARITHMETIC_BINOPS:
+            left = self._gen_char_promoted(left_node)
+            right = self._gen_char_promoted(right_node)
+        elif op in _COMPARISON_BINOPS:
+            left_is_char = self.st.node_type.get(id(left_node)) == T_CHAR
+            right_is_char = self.st.node_type.get(id(right_node)) == T_CHAR
+            left = self._gen_char_promoted(left_node) if left_is_char and not right_is_char else self._gen_expr(left_node)
+            right = self._gen_char_promoted(right_node) if right_is_char and not left_is_char else self._gen_expr(right_node)
+        else:
+            left = self._gen_expr(left_node)
+            right = self._gen_expr(right_node)
         t = self.new_temp()
         self.emit(BINARY_OPCODE[op], left, right, t)
         return t
@@ -1092,7 +1170,8 @@ def main():
     if sem_errors:
         for e in sem_errors:
             print(e, file=sys.stderr)
-        sys.exit(2)
+        if any(e.severity == "ERROR" for e in sem_errors):
+            sys.exit(2)
 
     try:
         quads, functions, var_types, structs = generate(ast, symtab)

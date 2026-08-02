@@ -404,7 +404,7 @@
 
   Total tokens  : 304
   Total errors  : 0
-  Scan time     : 1.148 ms
+  Scan time     : 0.540 ms
   Source lines  : 77
   Source chars  : 1797
 

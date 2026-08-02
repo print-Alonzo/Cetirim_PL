@@ -230,28 +230,38 @@ class StructInfo:
 class FunctionSig:
     """A resolved function signature - everything a call site needs to
     type-check against, plus the original `FunctionDecl` Node (`node`) so
-    `ir.py` can find its body again when it's time to lower it."""
+    `ir.py` can find its body again when it's time to lower it.
+    `param_defaults` is parallel to `param_names`/`param_types`: `None` for
+    a required parameter, or the (already type-checked, already-`Literal`)
+    default-value Node for one that may be omitted - the same Node is
+    reused at every call site that omits it, since its coerced type never
+    varies by call site (see `_infer_call`)."""
 
     name: str
     param_names: List[str]
     param_types: List[tuple]
     return_type: tuple  # T_VOID, a single type, or a ("tuple", ...) type
     node: Node
+    param_defaults: List[Optional[Node]] = field(default_factory=list)
 
 
 @dataclass
 class SemanticError:
     """One recorded semantic diagnostic: a message plus the AST position it
     applies to (`line`/`col` are `None` only for whole-program errors with
-    no single node to blame, e.g. "no main function")."""
+    no single node to blame, e.g. "no main function"). `severity` is either
+    `"ERROR"` (aborts compilation) or `"WARNING"` (reported but the pipeline
+    still proceeds) - see `Analyzer.error`/`Analyzer.warn`."""
 
     message: str
     line: Optional[int]
     col: Optional[int]
+    severity: str = "ERROR"
 
     def __str__(self):
         pos = f"Line {self.line}, Col {self.col}: " if self.line is not None else ""
-        return f"[SEMANTIC ERROR] {pos}{self.message}"
+        tag = "SEMANTIC ERROR" if self.severity == "ERROR" else "SEMANTIC WARNING"
+        return f"[{tag}] {pos}{self.message}"
 
 
 class SymbolTable:
@@ -273,6 +283,7 @@ class SymbolTable:
         self.node_coerce: Dict[int, tuple] = {}  # expr node -> target type to CAST to
         self.node_call: Dict[int, FunctionSig] = {}
         self.node_call_args: Dict[int, List[Node]] = {}  # CallExpr -> positionally-ordered args
+        self.node_is_predicate: Dict[int, bool] = {}  # match pattern node -> predicate vs. equality-compared
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +314,14 @@ class Analyzer:
         line = node.line if isinstance(node, Node) else None
         col = node.col if isinstance(node, Node) else None
         self.errors.append(SemanticError(message, line, col))
+
+    def warn(self, node, message):
+        """Record a non-fatal diagnostic - same shape as `error`, but the
+        pipeline still proceeds to IR generation/execution as long as no
+        `error`-severity diagnostic was also recorded."""
+        line = node.line if isinstance(node, Node) else None
+        col = node.col if isinstance(node, Node) else None
+        self.errors.append(SemanticError(message, line, col, severity="WARNING"))
 
     def run(self, program: Node):
         """Entry point: Pass 1 over every top-level declaration, then
@@ -421,7 +440,19 @@ class Analyzer:
             return t_struct(name)
         if node.kind == "ArrayType":
             base = self._resolve_type(node.fields["base"])
-            size = self._const_int_or_none(node.fields.get("size"))
+            size_node = node.fields.get("size")
+            size = self._const_int_or_none(size_node)
+            if size is None and size_node is not None:
+                # Not a compile-time literal (e.g. `int arr[n];`) - still
+                # has to be resolved and type-checked here, since this is
+                # the only place anything walks a type node at all; ir.py's
+                # `_gen_array_declare` later regenerates this same
+                # `size_node` into a runtime-computed ARR_NEW operand and
+                # needs it to have already been through `_infer_expr` (for
+                # `node_symbol`/`node_type`) just like any other expression.
+                size_type = self._infer_expr(size_node)
+                if not (is_error(size_type) or types_equal(size_type, T_INT)):
+                    self.error(size_node, f"Array size must be of type 'int', got '{type_name(size_type)}'")
             return t_array(base, size)
         if node.kind == "TupleType":
             return t_tuple([self._resolve_type(e) for e in node.fields["elements"]])
@@ -453,20 +484,33 @@ class Analyzer:
                 if name in self.st.functions:
                     self.error(d, f"Function '{name}' is already defined")
                     continue
-                param_names, param_types, seen = [], [], set()
+                param_names, param_types, param_defaults, seen = [], [], [], set()
+                seen_default = False
                 for p in d.fields["params"]:
                     pname = p.fields["name"]
                     if pname in seen:
                         self.error(p, f"Duplicate parameter '{pname}' in function '{name}'")
                     seen.add(pname)
                     param_names.append(pname)
-                    param_types.append(self._resolve_type(p.fields["type"]))
+                    ptype = self._resolve_type(p.fields["type"])
+                    param_types.append(ptype)
+                    default = p.fields.get("default")
+                    if default is not None:
+                        seen_default = True
+                        dtype = self._infer_expr(default)
+                        if not can_coerce(dtype, ptype):
+                            self.error(default, f"Cannot use '{type_name(dtype)}' as default for parameter '{pname}' of type '{type_name(ptype)}'")
+                        elif not types_equal(dtype, ptype):
+                            self.st.node_coerce[id(default)] = ptype
+                    elif seen_default:
+                        self.error(p, f"Parameter '{pname}' without a default cannot follow a parameter with one")
+                    param_defaults.append(default)
                 ret_node = d.fields["return_type"]
                 if ret_node.kind == "Type" and ret_node.fields["name"] == "void":
                     return_type = T_VOID
                 else:
                     return_type = self._resolve_type(ret_node)
-                self.st.functions[name] = FunctionSig(name, param_names, param_types, return_type, d)
+                self.st.functions[name] = FunctionSig(name, param_names, param_types, return_type, d, param_defaults)
             elif d.kind == "VarDecl":
                 for decl in d.fields["declarators"]:
                     gname = decl.fields["name"]
@@ -553,20 +597,75 @@ class Analyzer:
         for p, ptype in zip(fn_node.fields["params"], sig.param_types):
             self._declare_local(p.fields["name"], ptype, True, p)
         self._analyze_block(fn_node.fields["body"])
+        if sig.return_type != T_VOID and not self._always_returns(fn_node.fields["body"]):
+            self.error(fn_node, f"Function '{sig.name}' does not return a value on every code path")
         self._current_function = None
         self._scopes = []
+
+    def _always_returns(self, node):
+        """True if control cannot fall off the end of `node` without having
+        already executed a `return` (or an equivalent terminator - a
+        `throw`, or every branch of an exhaustive construct returning).
+        Used to catch a non-void function whose body might otherwise
+        silently yield Python's `None` at runtime (`ir.py` always emits an
+        unconditional fallthrough `RETURN` with no value at the end of
+        every function body). Dispatches directly on `node.kind`, which
+        works uniformly whether `node` is a `Block` or a bare statement
+        (e.g. an `else if`'s chained `IfStmt` - see
+        `_analyze_block_or_stmt`) since both shapes are handled here."""
+        kind = node.kind
+        if kind in ("ReturnStmt", "ThrowStmt"):
+            return True
+        if kind == "Block":
+            return any(self._always_returns(s) for s in node.fields["statements"])
+        if kind == "IfStmt":
+            if node.fields["else"] is None:
+                return False
+            return self._always_returns(node.fields["then"]) and self._always_returns(node.fields["else"])
+        if kind == "MatchStmt":
+            cases = node.fields["cases"]
+            if not any(c.fields["pattern"].kind == "WildcardPattern" for c in cases):
+                return False
+            return all(self._always_returns(c.fields["body"]) for c in cases)
+        if kind == "TryStmt":
+            finally_body = node.fields["finally_body"]
+            if finally_body is not None and self._always_returns(finally_body):
+                return True
+            body_returns = self._always_returns(node.fields["body"])
+            catches_return = all(self._always_returns(c.fields["body"]) for c in node.fields["catch_clauses"])
+            return body_returns and catches_return
+        return False  # GuardStmt, loops, and everything else: conservatively not guaranteed
+
+    def _terminates(self, node):
+        """Like `_always_returns`, but also true for `break`/`continue` -
+        used to flag unreachable statements within a block, where any of
+        the three (`return`, `break`, `continue`, or the terminators
+        `_always_returns` already covers) makes everything after it in the
+        same block dead code."""
+        if node.kind == "LoopControlStmt":
+            return True
+        return self._always_returns(node)
 
     def _analyze_block(self, block_node):
         """Push a fresh scope, analyze the block's declarations then its
         statements (in that order - `grammar.py`'s two-phase block parsing
         already guarantees declarations precede statements), then pop the
         scope back off so names declared here don't leak into the
-        enclosing block."""
+        enclosing block. Warns once on the first statement made
+        unreachable by an earlier terminator (`return`/`break`/`continue`/
+        `throw`) in the same block - everything after it is still analyzed
+        normally, just flagged."""
         self._scopes.append({})
         for decl in block_node.fields["declarations"]:
             self._analyze_local_decl(decl)
+        dead = False
         for stmt in block_node.fields["statements"]:
+            if dead:
+                self.warn(stmt, "Unreachable code")
+                dead = False  # only warn once per block, at the first unreachable statement
             self._analyze_stmt(stmt)
+            if self._terminates(stmt):
+                dead = True
         self._scopes.pop()
 
     def _analyze_block_or_stmt(self, node):
@@ -718,7 +817,13 @@ class Analyzer:
             self.error(decl, f"Expected {len(names)} value(s), got {len(values)}")
             elem_types = (value_types + [T_ERROR] * len(names))[:len(names)]
 
-        symbols = [self._make_local_symbol(n, t, True, decl) for n, t in zip(names, elem_types)]
+        # A `None` name (from a `_` slot in grammar.py's `_let_stmt_fn`)
+        # discards that position - no symbol is declared for it, and
+        # `None` is kept in its place in the returned list so ir.py's
+        # `gen_let_decl`/`_gen_destructure` can zip against `elem_types`
+        # positionally and skip emitting a store for it.
+        symbols = [self._make_local_symbol(n, t, True, decl) if n is not None else None
+                   for n, t in zip(names, elem_types)]
         self.st.node_symbol[id(decl)] = symbols
 
     # -- statements --
@@ -765,7 +870,9 @@ class Analyzer:
         elif kind == "TryStmt":
             self._analyze_try(node)
         elif kind == "ThrowStmt":
-            self._infer_expr(node.fields["value"])
+            t = self._infer_expr(node.fields["value"])
+            if not (is_error(t) or types_equal(t, T_STRING)):
+                self.error(node.fields["value"], f"'throw' requires a 'string' value, got '{type_name(t)}'")
         elif kind == "MultiAssign":
             self._analyze_multi_assign(node)
         else:
@@ -872,10 +979,11 @@ class Analyzer:
         argument must be a plain, already-declared, mutable identifier
         (not an array/struct field, index expression, or literal) - `input`
         writes a value *into* a variable, so it needs an actual assignable
-        slot to write into. Note this only checks the *target's* shape and
-        mutability, not its type (see LIMITATIONS.md: `input()` into an
-        array/struct variable passes this check but misbehaves at runtime).
-        """
+        slot to write into. It must also be a scalar (`int`/`float`/`char`/
+        `string`/`bool`) - an array/struct/tuple target would silently be
+        overwritten with a raw string by `IRExecutor._coerce`'s fallback
+        branch, since it has no representation to parse into for those
+        tags."""
         if node.fields["name"] == "print":
             for a in node.fields["args"]:
                 self._infer_expr(a)
@@ -884,31 +992,29 @@ class Analyzer:
             if a.kind != "Identifier":
                 self.error(a, "input() arguments must be plain variable names")
                 continue
-            self._infer_expr(a)
+            t = self._infer_expr(a)
             sym = self.st.node_symbol.get(id(a))
             if isinstance(sym, Symbol) and not sym.mutable:
                 self.error(a, f"Cannot input() into immutable variable '{sym.name}'")
-
-    def _is_predicate_pattern(self, pattern):
-        """A match pattern is treated as a standalone boolean predicate
-        (evaluated on its own, not compared against the subject) whenever
-        its outermost node is a relational/logical `BinaryExpr` or a `!`
-        `UnaryExpr` - e.g. `code > 9 =>`. This is a shape heuristic, not a
-        real type-based distinction: see LIMITATIONS.md for the case it
-        can't express (equality-comparing the subject to a bool-valued
-        sub-expression)."""
-        if pattern.kind == "BinaryExpr" and pattern.fields.get("op") in {"<", ">", "<=", ">=", "==", "!=", "&&", "||"}:
-            return True
-        if pattern.kind == "UnaryExpr" and pattern.fields.get("op") == "!":
-            return True
-        return False
+            if not (is_error(t) or (t[0] == "prim" and t != T_VOID)):
+                self.error(a, f"input() target must be a scalar variable, got '{type_name(t)}'")
 
     def _analyze_pattern(self, pattern, subj_type):
         """Type-check one match arm's pattern against the subject's type,
         branching on the same three pattern shapes ir.py's
         `_gen_match_test` later dispatches on: wildcard (nothing to check),
-        range (needs a numeric subject), predicate (must itself be `bool`,
-        subject type irrelevant), or plain equality-comparable value."""
+        range (needs a numeric subject), predicate (evaluated standalone,
+        ignoring the subject), or plain equality-comparable value.
+
+        A pattern is a predicate iff *its own* type is `bool` and the
+        subject's type is *not* - a real type-based decision, recorded in
+        `node_is_predicate` for `ir.py`'s `_gen_match_test` to reuse
+        without re-deriving it, rather than the previous AST-shape guess
+        (any top-level relational/logical operator). That heuristic could
+        never express a pattern that equality-compares the subject against
+        a bool-valued sub-expression; this can, since the decision now
+        looks at the subject's type too - e.g. `match (p) { true => ...
+        }` with a `bool` subject correctly stays an equality compare."""
         if pattern.kind == "WildcardPattern":
             return
         if pattern.kind == "RangeExpr":
@@ -917,12 +1023,11 @@ class Analyzer:
             if not (is_error(subj_type) or is_numeric(subj_type)):
                 self.error(pattern, f"Range pattern requires a numeric subject, got '{type_name(subj_type)}'")
             return
-        if self._is_predicate_pattern(pattern):
-            t = self._infer_expr(pattern)
-            if not (is_error(t) or types_equal(t, T_BOOL)):
-                self.error(pattern, f"Match predicate pattern must be of type 'bool', got '{type_name(t)}'")
-            return
         pt = self._infer_expr(pattern)
+        is_predicate = types_equal(pt, T_BOOL) and not (is_error(subj_type) or types_equal(subj_type, T_BOOL))
+        self.st.node_is_predicate[id(pattern)] = is_predicate
+        if is_predicate:
+            return
         if not (is_error(pt) or is_error(subj_type)):
             if is_numeric(pt) and is_numeric(subj_type):
                 pass
@@ -940,8 +1045,15 @@ class Analyzer:
         subj_type = self._infer_expr(node.fields["subject"])
         value_key = "value" if is_expr else "body"
         arm_types = []
+        seen_literals = set()
         for case in node.fields["cases"]:
-            self._analyze_pattern(case.fields["pattern"], subj_type)
+            pattern = case.fields["pattern"]
+            if pattern.kind == "Literal":
+                key = (pattern.fields.get("token_type"), pattern.fields.get("value"))
+                if key in seen_literals:
+                    self.warn(pattern, f"Duplicate match pattern '{pattern.fields.get('lexeme')}' is unreachable")
+                seen_literals.add(key)
+            self._analyze_pattern(pattern, subj_type)
             value_node = case.fields[value_key]
             if is_expr:
                 arm_types.append(self._infer_expr(value_node))
@@ -960,13 +1072,17 @@ class Analyzer:
         """`try`/`catch`/`finally`: the catch variable is always declared
         as a fresh `string`-typed local scoped to just that catch clause
         (matching the language rule that thrown/caught values are always
-        strings - see LIMITATIONS.md for the corresponding gap on the
-        `throw` side, which never enforces this). Every catch clause is
-        analyzed here, even though `ir.py`'s `gen_try` only ever lowers the
-        first one - see LIMITATIONS.md's "multiple catch clauses are mostly
-        decorative"."""
+        strings). Catch clauses carry no exception type, so there's no way
+        to selectively dispatch between more than one - the grammar still
+        accepts `catch_list -> catch_clause catch_list` (a `TryStmt` can
+        carry several `CatchClause` nodes), but only one is semantically
+        meaningful, so anything past the first is rejected here rather than
+        silently compiled as dead code."""
         self._analyze_block(node.fields["body"])
-        for clause in node.fields["catch_clauses"]:
+        clauses = node.fields["catch_clauses"]
+        if len(clauses) > 1:
+            self.error(clauses[1], "Only one 'catch' clause is supported")
+        for clause in clauses:
             self._scopes.append({})
             sym = self._make_local_symbol(clause.fields["name"], T_STRING, True, clause)
             self.st.node_symbol[id(clause)] = sym
@@ -991,10 +1107,14 @@ class Analyzer:
         *element* types actually get cast at all is `ir.py`'s `UNPACK`
         opcode's concern, not this analysis's.)
         """
-        lvalues = node.fields["lvalues"]  # list of {"type": Node, "name": str}
+        lvalues = node.fields["lvalues"]  # list of {"type": Node, "name": str|None}
         values = node.fields["values"]
         types = [self._resolve_type(lv["type"]) for lv in lvalues]
-        symbols = [self._make_local_symbol(lv["name"], t, True, node) for lv, t in zip(lvalues, types)]
+        # A `None` name (from a `_` slot in grammar.py's `_multi_assign_stmt_fn`)
+        # discards that position - still type-checked below like any other
+        # slot, just never declared as a symbol.
+        symbols = [self._make_local_symbol(lv["name"], t, True, node) if lv["name"] is not None else None
+                   for lv, t in zip(lvalues, types)]
         self.st.node_symbol[id(node)] = symbols
 
         value_types = [self._infer_expr(v) for v in values]
@@ -1227,9 +1347,11 @@ class Analyzer:
         whether the source used `f(1, 2)` or `f(b: 2, a: 1)`.
 
         Named and positional arguments cannot be mixed in one call (checked
-        below); named calls must supply every parameter (no defaults exist
-        in this language - see LIMITATIONS.md), and positional calls are
-        checked strictly by count and per-position type.
+        below). A parameter with a default (see grammar.py's `_param_fn`)
+        may be omitted from either call form; omitting one splices in the
+        same shared default-value Node `_collect_functions_and_const_globals`
+        already type-checked once at the parameter's declaration, so it
+        never needs re-checking per call site.
         """
         callee = node.fields["callee"]
         if callee.kind != "Identifier":
@@ -1259,17 +1381,21 @@ class Analyzer:
                 if pname in provided:
                     self.error(a, f"Parameter '{pname}' specified more than once")
                 provided[pname] = a.fields["value"]
-            missing = [p for p in sig.param_names if p not in provided]
+            defaults_by_name = dict(zip(sig.param_names, sig.param_defaults))
+            missing = [p for p in sig.param_names if p not in provided and defaults_by_name[p] is None]
             if missing:
                 self.error(node, f"Missing argument(s) for parameter(s): {', '.join(missing)}")
             # Rebuild the argument list in the function's own declared
             # parameter order - this is what makes node_call_args
             # positionally-ordered regardless of the named call's writing
-            # order.
+            # order. An omitted defaulted parameter splices in its shared
+            # default Node instead of being skipped.
             ordered = []
-            for pname, ptype in zip(sig.param_names, sig.param_types):
+            for pname, ptype, default in zip(sig.param_names, sig.param_types, sig.param_defaults):
                 v = provided.get(pname)
                 if v is None:
+                    if default is not None:
+                        ordered.append(default)
                     continue
                 vt = self._infer_expr(v)
                 if not can_coerce(vt, ptype):
@@ -1279,8 +1405,12 @@ class Analyzer:
                 ordered.append(v)
             self.st.node_call_args[id(node)] = ordered
         else:
-            if len(args) != len(sig.param_names):
-                self.error(node, f"Function '{name}' expects {len(sig.param_names)} argument(s), got {len(args)}")
+            required_count = sum(1 for d in sig.param_defaults if d is None)
+            if not (required_count <= len(args) <= len(sig.param_names)):
+                if required_count == len(sig.param_names):
+                    self.error(node, f"Function '{name}' expects {len(sig.param_names)} argument(s), got {len(args)}")
+                else:
+                    self.error(node, f"Function '{name}' expects {required_count} to {len(sig.param_names)} argument(s), got {len(args)}")
             for a, ptype in zip(args, sig.param_types):
                 vt = self._infer_expr(a)
                 if not can_coerce(vt, ptype):
@@ -1289,7 +1419,12 @@ class Analyzer:
                     self.st.node_coerce[id(a)] = ptype
             for a in args[len(sig.param_names):]:
                 self._infer_expr(a)
-            self.st.node_call_args[id(node)] = list(args[:len(sig.param_names)])
+            # Trailing omitted parameters (only possible when every one of
+            # them has a default - see the arity check above) splice in
+            # their shared default Nodes.
+            ordered = list(args[:len(sig.param_names)])
+            ordered += [d for d in sig.param_defaults[len(args):] if d is not None]
+            self.st.node_call_args[id(node)] = ordered
         return sig.return_type
 
 
