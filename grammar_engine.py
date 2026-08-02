@@ -554,12 +554,23 @@ def many_rec(part, is_stop):
     recorded in ps.errors), synchronize to the next safe boundary and keep
     going, instead of letting one malformed statement/declaration abort
     everything after it.
+
+    Termination invariant: every iteration must consume at least one token,
+    or the loop would spin forever. The RBRACE guard below deliberately
+    declines to step past a `}` (it belongs to the enclosing block) - but
+    that is only safe when this loop's own `is_stop` treats `}` as a stop
+    too, which is true for block bodies but not for the top-level `program`
+    loop (`is_stop=lambda ps: False`). If recovery strands the cursor on a
+    `}` that loop won't recognize, the iteration would otherwise consume
+    zero tokens and repeat identically forever - so a stalled iteration
+    forces a one-token step as a last resort.
     """
 
     class ManyRec:
         def run(self, ps, committed):
             items = []
             while not is_stop(ps) and not ps.at_end():
+                before = ps.pos
                 try:
                     items.append(part.run(ps, True))
                 except HardFail:  # error already recorded by whatever raised it
@@ -573,6 +584,8 @@ def many_rec(part, is_stop):
                     # is supposed to end the enclosing block/loop.
                     if not ps.at_end() and not ps.check(TT.RBRACE):
                         ps.pos += 1
+                if ps.pos == before and not is_stop(ps) and not ps.at_end():
+                    ps.pos += 1
             return items
 
     return ManyRec()

@@ -1,0 +1,9 @@
+// Negative fixture: ';' is the match-statement arm separator, not the
+// match-expression one (which uses ',') - using it here is a syntax error.
+void main() {
+    var string r;
+    var int x;
+    x = 7;
+    r = match (x) { x > 5 => "big"; _ => "small"; };
+    print(r);
+}

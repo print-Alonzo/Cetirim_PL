@@ -1,0 +1,5 @@
+// Negative fixture: a stray top-level '}' used to spin many_rec forever.
+void main() {
+    print("hi");
+}
+}

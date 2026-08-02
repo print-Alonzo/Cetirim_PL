@@ -73,21 +73,7 @@ else.
 | Dynamically-sized arrays without an initializer aren't supported | `int arr[n];` now computes `ARR_NEW`'s size at runtime when `n` isn't a compile-time literal — `tests/dynamic_array.src` |
 | No protection against runaway recursion or infinite loops | The VM now caps total executed quads (`--max-steps`) and call-stack depth (`--max-depth`) — see §1, `tests/infinite_recursion.src` |
 | Struct/array literal-init and equality untested by the 5 required programs | `tests/struct_array_init.src` now exercises both |
-
-### `match` expression used as a bare assignment/call-argument value hangs the parser
-
-Discovered while testing the interpolated-string fix above (a `match`
-expression embedded inside `` `{...}` `` triggered it, but it isn't specific
-to interpolation — it reproduces identically with no interpolation involved,
-e.g. `result = match (x) { x > 5 => "big"; _ => "small"; };` as a plain
-statement). Confirmed present on the pre-existing code at the start of this
-session (via `git stash`), so it predates every change in this document —
-this is a newly-*documented* gap, not a newly-introduced one, and fixing it
-was outside this session's scope. Whatever's driving it lives somewhere in
-the `match_expression`/`statement`-level grammar interaction (possibly the
-statement-level `Alt` retrying `match_stmt` then `expr_stmt`, each of which
-tries to parse the same `match` keyword, in a way `many_rec`'s error
-recovery doesn't terminate on) — not yet root-caused.
+| A `match` expression used as a bare assignment/call-argument value hangs the parser | **Misattributed to `match` — it never was.** `r = match (x) { 1 => "one", _ => "other" };` (`prog4_structs_match_exceptions.src:101`) and `print(match (x) { ... })` always parsed fine; a bare stray top-level `}` with no `match` anywhere reproduces the exact same hang. Root cause: `grammar_engine.py`'s `many_rec` could make zero progress when error recovery stranded the cursor on a `}` that the enclosing loop's `is_stop` didn't recognize as a stop (true for the top-level `program` loop, which never stops on `}`) — recovery would land on the same token forever, appending an unbounded stream of errors. Fixed by giving `many_rec` a forward-progress invariant: if an iteration consumes zero tokens and the loop isn't about to stop anyway, force a one-token step. The original repro used `;` to separate match-*expression* arms, which is actually invalid (expression arms are comma-separated; `;` is the match-*statement* form) — that's now a single precise `[SYNTAX ERROR]` instead of a cascade that happened to strand the cursor on `}`. See `tests/stray_brace.src` (pins the engine fix, `match`-independent) and `tests/match_expr_semicolon.src` (pins the new diagnostic) |
 
 ---
 

@@ -40,6 +40,8 @@ PROGRAMS = [
 NEGATIVE_FIXTURES = [
     ("tests/lex_error.src", "[LEXICAL ERROR]", 2),
     ("tests/syntax_error.src", "[SYNTAX ERROR]", 2),
+    ("tests/stray_brace.src", "[SYNTAX ERROR]", 2),
+    ("tests/match_expr_semicolon.src", "[SYNTAX ERROR]", 2),
     ("tests/semantic_error.src", "[SEMANTIC ERROR]", 2),
     ("tests/multi_catch_error.src", "[SEMANTIC ERROR]", 2),
     ("tests/throw_type_error.src", "[SEMANTIC ERROR]", 2),
@@ -65,10 +67,20 @@ FEATURE_FIXTURES = [
 
 
 def run(script, src, stdin_text=""):
-    return subprocess.run(
-        [sys.executable, script, src],
-        cwd=ROOT, input=stdin_text, capture_output=True, text=True,
-    )
+    args = [sys.executable, script, src]
+    try:
+        return subprocess.run(
+            args, cwd=ROOT, input=stdin_text, capture_output=True, text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        # A non-terminating parser/interpreter bug (e.g. the many_rec
+        # infinite loop this suite once hit) would otherwise hang the whole
+        # run indefinitely instead of failing one check.
+        return subprocess.CompletedProcess(
+            args=args, returncode=124,
+            stdout="", stderr=f"[FAIL] {script} {src}: timed out after 60s\n",
+        )
 
 
 def _print_diff(expected, actual):

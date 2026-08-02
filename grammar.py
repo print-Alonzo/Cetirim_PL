@@ -840,6 +840,7 @@ def _match_cases_fn(label, value_key):
         Term(TT.LBRACE, msg=f"Expected '{{' before {label} cases").run(ps, True)
         cases = []
         seen_wildcard = False
+        reported_semicolon = False
         while not ps.check(TT.RBRACE) and not ps.at_end():
             if seen_wildcard:
                 # Grammar-level check (not left to semantics.py) because
@@ -858,6 +859,17 @@ def _match_cases_fn(label, value_key):
                     Term(TT.COMMA).run(ps, False)
                 except Fail:
                     ps.pos = save
+                # A `;` here is the match-statement arm separator used by
+                # mistake in the expression form. Consume it (reporting once
+                # per match expression) so the arm loop stays in sync
+                # instead of hard-failing into the enclosing statement's
+                # recovery path.
+                while ps.check(TT.SEMICOLON):
+                    if not reported_semicolon:
+                        ps.error("match expression cases are separated by "
+                                 "',' - ';' is only valid in a match statement")
+                        reported_semicolon = True
+                    ps.pos += 1
             if pattern.kind == "WildcardPattern":
                 seen_wildcard = True
             cases.append(Node("MatchCase", {"pattern": pattern, value_key: value}))
