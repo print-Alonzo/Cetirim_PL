@@ -1,0 +1,2 @@
+literal brace: {x} and real interp: 5
+result: }

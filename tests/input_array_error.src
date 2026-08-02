@@ -1,0 +1,6 @@
+// Negative fixture: input() targets must be scalar - an array target is a
+// semantic error.
+void main() {
+    var int arr[3];
+    input(arr);
+}

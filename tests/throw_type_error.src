@@ -1,0 +1,5 @@
+// Negative fixture: 'throw' requires a string value - throwing an int is a
+// semantic error (catch variables are always typed string).
+void main() {
+    throw 42;
+}

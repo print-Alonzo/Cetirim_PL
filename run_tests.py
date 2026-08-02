@@ -8,10 +8,17 @@ Positive fixtures (prog1..prog5): each program's compiled quadruple listing
 and executed output are diffed against the committed goldens (progN_ir.txt,
 progN_expected.txt). Programs that call input() read from progN.in.
 
-Negative fixtures (tests/*.src): each is expected to fail at one specific
-phase; the runner only checks that the right "[... ERROR]" tag appears and
-that the process exits 2 - it does not pin exact wording, so error-message
-copy can still be improved without breaking the suite.
+Negative fixtures (NEGATIVE_FIXTURES): each is expected to fail at one
+specific phase; the runner only checks that the right "[... ERROR]" tag
+appears and that the process exits with the declared code (2 for
+lex/syntax/semantic/IR errors, 3 for runtime errors) - it does not pin exact
+wording, so error-message copy can still be improved without breaking the
+suite.
+
+Feature fixtures (FEATURE_FIXTURES, tests/<name>.src + tests/<name>_expected.txt):
+programs that exercise a specific language feature outside the five graded
+sample programs. Each is expected to run to completion (exit 0); its
+stdout+stderr is diffed against the committed golden.
 """
 
 import argparse
@@ -31,9 +38,29 @@ PROGRAMS = [
 ]
 
 NEGATIVE_FIXTURES = [
-    ("tests/lex_error.src", "[LEXICAL ERROR]"),
-    ("tests/syntax_error.src", "[SYNTAX ERROR]"),
-    ("tests/semantic_error.src", "[SEMANTIC ERROR]"),
+    ("tests/lex_error.src", "[LEXICAL ERROR]", 2),
+    ("tests/syntax_error.src", "[SYNTAX ERROR]", 2),
+    ("tests/semantic_error.src", "[SEMANTIC ERROR]", 2),
+    ("tests/multi_catch_error.src", "[SEMANTIC ERROR]", 2),
+    ("tests/throw_type_error.src", "[SEMANTIC ERROR]", 2),
+    ("tests/input_array_error.src", "[SEMANTIC ERROR]", 2),
+    ("tests/missing_return_error.src", "[SEMANTIC ERROR]", 2),
+    ("tests/ir_array_error.src", "[IR ERROR]", 2),
+    ("tests/div_by_zero.src", "[RUNTIME ERROR]", 3),
+    ("tests/mod_by_zero.src", "[RUNTIME ERROR]", 3),
+    ("tests/array_oob.src", "[RUNTIME ERROR]", 3),
+    ("tests/uncaught_exception.src", "[RUNTIME ERROR]", 3),
+    ("tests/infinite_recursion.src", "[RUNTIME ERROR]", 3),
+]
+
+FEATURE_FIXTURES = [
+    "struct_array_init",
+    "dynamic_array",
+    "discard",
+    "default_params",
+    "interp_edge_cases",
+    "negative_mod",
+    "string_comparison",
 ]
 
 
@@ -93,13 +120,38 @@ def check_positive(name, update):
     return ok
 
 
-def check_negative(path, tag):
+def check_negative(path, tag, exit_code=2):
     result = run("interpreter.py", str(ROOT / path))
     combined = result.stdout + result.stderr
-    ok = tag in combined and result.returncode == 2
-    print(f"[{'PASS' if ok else 'FAIL'}] {path}: expected {tag!r} and exit 2, got exit {result.returncode}")
+    ok = tag in combined and result.returncode == exit_code
+    print(f"[{'PASS' if ok else 'FAIL'}] {path}: expected {tag!r} and exit {exit_code}, got exit {result.returncode}")
     if not ok:
         print(combined)
+    return ok
+
+
+def check_feature(name, update):
+    src = f"tests/{name}.src"
+    expected_file = ROOT / f"tests/{name}_expected.txt"
+    result = run("interpreter.py", src)
+    actual_out = result.stdout + result.stderr
+
+    if update:
+        expected_file.write_text(actual_out)
+        print(f"[UPDATED] tests/{name}")
+        return True
+
+    ok = True
+    expected_out = expected_file.read_text() if expected_file.exists() else ""
+    if actual_out != expected_out:
+        print(f"[FAIL] tests/{name}: output mismatch")
+        _print_diff(expected_out, actual_out)
+        ok = False
+    if result.returncode != 0:
+        print(f"[FAIL] tests/{name}: exited {result.returncode}, expected 0")
+        ok = False
+    if ok:
+        print(f"[PASS] tests/{name}")
     return ok
 
 
@@ -109,11 +161,12 @@ def main():
     args = cli.parse_args()
 
     results = [check_positive(name, args.update) for name in PROGRAMS]
+    results += [check_feature(name, args.update) for name in FEATURE_FIXTURES]
     if args.update:
         print("Golden files updated.")
         return
 
-    results += [check_negative(path, tag) for path, tag in NEGATIVE_FIXTURES]
+    results += [check_negative(path, tag, exit_code) for path, tag, exit_code in NEGATIVE_FIXTURES]
 
     passed, total = sum(results), len(results)
     print(f"\n{passed}/{total} checks passed")

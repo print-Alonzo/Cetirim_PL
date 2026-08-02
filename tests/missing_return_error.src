@@ -1,0 +1,10 @@
+// Negative fixture: a non-void function that doesn't return on every code
+// path (here, an if with no else) is a semantic error.
+int maybe(bool flag) {
+    if (flag) {
+        return 1;
+    }
+}
+void main() {
+    print(maybe(true));
+}
