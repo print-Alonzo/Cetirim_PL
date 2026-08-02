@@ -677,7 +677,7 @@
 
   Total tokens  : 504
   Total errors  : 0
-  Scan time     : 0.989 ms
+  Scan time     : 2.807 ms
   Source lines  : 150
   Source chars  : 3870
 
@@ -704,3 +704,4 @@
     RANGE_OP              1
     INTERP_STRING         1
     ARITH_OP              1
+

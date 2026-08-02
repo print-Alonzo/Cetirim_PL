@@ -837,7 +837,7 @@
 
   Total tokens  : 658
   Total errors  : 0
-  Scan time     : 1.129 ms
+  Scan time     : 2.531 ms
   Source lines  : 156
   Source chars  : 4155
 
@@ -858,3 +858,4 @@
     LOGIC_OP              6
     INTERP_STRING         1
     FLOAT_LIT             1
+

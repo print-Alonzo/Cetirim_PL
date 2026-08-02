@@ -1,0 +1,23 @@
+// Feature fixture: a struct with a struct-typed field and an array-typed
+// field - both must be default-constructed as real (non-None) values by
+// STRUCT_NEW, not left as the flat DEFAULTS lookup's None fallback.
+struct Inner {
+    int v;
+};
+
+struct Bag {
+    struct Inner i;
+    int items[4];
+    int n;
+};
+
+void main() {
+    var struct Bag b;
+
+    b.i.v = 9;
+    b.n = 2;
+    b.items[0] = 7;
+    b.items[1] = 8;
+
+    print(b.i.v, b.n, b.items[0], b.items[1]);
+}

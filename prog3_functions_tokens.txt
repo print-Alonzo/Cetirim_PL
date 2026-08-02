@@ -752,7 +752,7 @@
 
   Total tokens  : 613
   Total errors  : 0
-  Scan time     : 0.980 ms
+  Scan time     : 1.782 ms
   Source lines  : 116
   Source chars  : 2838
 
@@ -775,3 +775,4 @@
     COLON                 2
     INTERP_STRING         1
     CHAR_LIT              1
+

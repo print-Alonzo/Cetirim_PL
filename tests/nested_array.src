@@ -1,0 +1,19 @@
+// Feature fixture: a two-dimensional array declarator (`int grid[3][3];`)
+// - each outer slot must get its own freshly-constructed inner array, not
+// one shared list aliased across every row.
+void main() {
+    var int grid[3][3];
+    var int i, j;
+
+    for (i = 0; i < 3; i = i + 1) {
+        for (j = 0; j < 3; j = j + 1) {
+            grid[i][j] = i * 3 + j;
+        }
+    }
+
+    for (i = 0; i < 3; i = i + 1) {
+        for (j = 0; j < 3; j = j + 1) {
+            print(grid[i][j]);
+        }
+    }
+}

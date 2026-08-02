@@ -4,9 +4,14 @@ interpreter pipeline.
     python run_tests.py            run every check, report pass/fail
     python run_tests.py --update   regenerate the golden files from current output
 
-Positive fixtures (prog1..prog5): each program's compiled quadruple listing
-and executed output are diffed against the committed goldens (progN_ir.txt,
-progN_expected.txt). Programs that call input() read from progN.in.
+Positive fixtures (prog1..prog5): each program's scanner token stream,
+compiled quadruple listing, and executed output are diffed against the
+committed goldens (progN_tokens.txt, progN_ir.txt, progN_expected.txt).
+Programs that call input() read from progN.in. The token stream's "Scan
+time" line is a live per-run timing measurement, not scanner output, so
+it's stripped from both sides before comparing (but --update still writes
+whatever timing that regeneration run happened to see, same as the
+existing manual `scanner.py -o` workflow).
 
 Negative fixtures (NEGATIVE_FIXTURES): each is expected to fail at one
 specific phase; the runner only checks that the right "[... ERROR]" tag
@@ -53,6 +58,8 @@ NEGATIVE_FIXTURES = [
     ("tests/array_oob.src", "[RUNTIME ERROR]", 3),
     ("tests/uncaught_exception.src", "[RUNTIME ERROR]", 3),
     ("tests/infinite_recursion.src", "[RUNTIME ERROR]", 3),
+    ("tests/recursive_struct_error.src", "[SEMANTIC ERROR]", 2),
+    ("tests/dynamic_inner_dim_error.src", "[SEMANTIC ERROR]", 2),
 ]
 
 FEATURE_FIXTURES = [
@@ -63,6 +70,10 @@ FEATURE_FIXTURES = [
     "interp_edge_cases",
     "negative_mod",
     "string_comparison",
+    "nested_array",
+    "struct_array",
+    "nested_struct",
+    "struct_return",
 ]
 
 
@@ -92,25 +103,50 @@ def _print_diff(expected, actual):
     sys.stdout.writelines(diff)
 
 
+def _strip_scan_time(text):
+    """Scanner reports include a live 'Scan time : N.NNN ms' measurement -
+    real scan output, but inherently different on every run, so it's
+    stripped before comparing token streams (--update still writes it
+    verbatim; only the comparison ignores it). Also normalizes the trailing
+    newline count: `scanner.py`'s CLI writes the report as-is to a `-o`
+    file but `print()`s it to stdout (which appends its own trailing
+    newline on top of the report's own), so a stdout capture and a
+    file-dumped golden differ by one blank line at the end even when the
+    actual token stream is identical - not a regression worth flagging."""
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("Scan time")
+    ).rstrip("\n")
+
+
 def check_positive(name, update):
     src = f"{name}.src"
     in_file = ROOT / f"{name}.in"
     expected_file = ROOT / f"{name}_expected.txt"
     ir_file = ROOT / f"{name}_ir.txt"
+    tokens_file = ROOT / f"{name}_tokens.txt"
     stdin_text = in_file.read_text() if in_file.exists() else ""
 
+    scan_result = run("scanner.py", src)
     ir_result = run("ir.py", src)
     run_result = run("interpreter.py", src, stdin_text)
+    actual_tokens = scan_result.stdout
     actual_ir = ir_result.stdout
     actual_out = run_result.stdout + run_result.stderr
 
     if update:
+        tokens_file.write_text(actual_tokens)
         ir_file.write_text(actual_ir)
         expected_file.write_text(actual_out)
         print(f"[UPDATED] {name}")
         return True
 
     ok = True
+    expected_tokens = tokens_file.read_text() if tokens_file.exists() else ""
+    if _strip_scan_time(actual_tokens) != _strip_scan_time(expected_tokens):
+        print(f"[FAIL] {name}: scanner token stream mismatch")
+        _print_diff(_strip_scan_time(expected_tokens), _strip_scan_time(actual_tokens))
+        ok = False
+
     expected_ir = ir_file.read_text() if ir_file.exists() else ""
     if actual_ir != expected_ir:
         print(f"[FAIL] {name}: IR mismatch")

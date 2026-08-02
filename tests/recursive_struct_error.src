@@ -1,0 +1,12 @@
+// Negative fixture: a struct that contains itself by value is a semantic
+// error - constructing it would otherwise recurse forever (STRUCT_NEW's
+// default field value is itself a fresh struct of the same type, ...).
+struct Node {
+    int v;
+    struct Node next;
+};
+
+void main() {
+    var struct Node n;
+    print(n.v);
+}
