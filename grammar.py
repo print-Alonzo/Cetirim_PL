@@ -188,6 +188,14 @@ def _build_struct_decl(ps, c):
 
 
 GRAMMAR["struct_decl"] = Seq(
+    # Lookahead-gated: `struct IDENTIFIER {` is a struct *declaration*, but
+    # `struct IDENTIFIER` used as a return type (`struct Point make(...)`)
+    # also starts with `struct IDENTIFIER` - without this guard the old
+    # unconditional Cut() right after Kw("struct") would commit to this
+    # rule and never let top_level_decl's Alt fall through to
+    # top_level_function_decl. The lookahead consumes nothing; the real
+    # Kw("struct")/Cut() below still commit normally once it succeeds.
+    And(Seq(Kw("struct"), Term(TT.IDENTIFIER), Term(TT.LBRACE))),
     Kw("struct"), Cut(),
     Bind("name", Term(TT.IDENTIFIER, msg="Expected struct name")),
     Term(TT.LBRACE, msg="Expected '{' before struct fields"),

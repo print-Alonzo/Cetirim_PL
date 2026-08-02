@@ -182,7 +182,21 @@ class IRExecutor:
                 self._exec(q)
         except _NATIVE_RUNTIME_ERRORS as e:
             line = self.quads[self.pc].line if self.pc < len(self.quads) else None
-            raise RuntimeVMError(str(e), line) from None
+            if isinstance(e, ZeroDivisionError):
+                # _div/_mod are the only deliberate raisers among
+                # _NATIVE_RUNTIME_ERRORS, always with an already-clean,
+                # hand-authored message ("Division by zero"/"Modulo by
+                # zero") - never leaked Python-internal text, so pass it
+                # through unchanged.
+                raise RuntimeVMError(str(e), line) from None
+            # Anything else here is an unexpected internal failure this VM
+            # doesn't have a hand-checked diagnostic for - report a generic,
+            # non-Python-specific message naming the failing quad instead of
+            # leaking raw Python exception text (e.g. "object of type
+            # 'NoneType' has no len()") through the [RUNTIME ERROR] channel.
+            # Should be unreachable for any well-formed program; kept as
+            # defense in depth.
+            raise RuntimeVMError(f"Unexpected internal error while executing quad {self.pc}", line) from None
 
     # -- dispatch ------------------------------------------------------------
 
@@ -248,7 +262,7 @@ class IRExecutor:
             size = self.resolve(q.arg1)
             if size < 0:
                 self._runtime_error(f"Array size cannot be negative (got {size})")
-            self.set_var(q.result, [DEFAULTS.get(q.arg2)] * size)
+            self.set_var(q.result, [self._make_default(q.arg2) for _ in range(size)])
             self.pc += 1
         elif op == "ARR_LOAD":
             # LOAD: (array, index) -> result.
@@ -271,7 +285,7 @@ class IRExecutor:
         # -- structs --
         elif op == "STRUCT_NEW":
             fields = self.structs.get(q.arg1, {"fields": []})["fields"]
-            self.set_var(q.result, StructValue(q.arg1, {fn: DEFAULTS.get(ft) for fn, ft in fields}))
+            self.set_var(q.result, StructValue(q.arg1, {fn: self._make_default(ft) for fn, ft in fields}))
             self.pc += 1
         elif op == "FIELD_LOAD":
             # LOAD: (struct, field_name) -> result.
@@ -447,6 +461,23 @@ class IRExecutor:
         same `RuntimeVMError` any native exception gets translated into)."""
         if not (0 <= idx < len(arr)):
             self._runtime_error(f"Array index {idx} out of bounds (length {len(arr)})")
+
+    def _make_default(self, desc):
+        """Recursively build a fresh default value from a `TypeDesc` (see
+        ir.py): a scalar's `DEFAULTS` entry, a zero-filled array where every
+        element is its own freshly-built value - never one shared list/
+        struct aliased across every slot, which is what a naive `[x] * n`
+        would do (see the module docstring on arrays/structs being
+        reference values) - or a struct with every field
+        default-initialized the same way. Used by `ARR_NEW`/`STRUCT_NEW` in
+        place of the old flat `DEFAULTS.get(tag)` lookup, which only knew
+        the five primitive types and left any nested array/struct `None`."""
+        if desc.tag == "array":
+            return [self._make_default(desc.elem) for _ in range(desc.size or 0)]
+        if desc.tag == "struct":
+            fields = self.structs.get(desc.name, {"fields": []})["fields"]
+            return StructValue(desc.name, {fn: self._make_default(ft) for fn, ft in fields})
+        return DEFAULTS.get(desc.tag)
 
     # -- values ------------------------------------------------------------
 

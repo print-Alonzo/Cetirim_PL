@@ -373,6 +373,42 @@ class Analyzer:
             self._resolve_struct(name)
         for name in list(self._typedef_nodes):
             self._resolve_typedef(name)
+        self._check_struct_recursion()
+
+    def _check_struct_recursion(self):
+        """Reject a struct that contains itself by value - directly,
+        through a chain of other structs, or through an array field's
+        element type (a fixed-size array field still eagerly constructs one
+        instance of its element type per slot, so an array-of-self is
+        exactly as circular as a plain self-typed field). Without this,
+        `ir.py`'s STRUCT_NEW/ARR_NEW recursive default-value construction
+        (`interpreter.py`'s `_make_default`) would recurse forever building
+        the value - this catches it as a diagnosable error instead."""
+
+        def field_struct_refs(type_):
+            while type_[0] == "array":
+                type_ = type_[1]
+            if type_[0] == "struct":
+                yield type_[1]
+
+        def reaches_self(start, current, visited):
+            info = self.st.structs.get(current)
+            if info is None:
+                return False
+            for fname in info.field_order:
+                for ref in field_struct_refs(info.fields[fname]):
+                    if ref == start:
+                        return True
+                    if ref not in visited:
+                        visited.add(ref)
+                        if reaches_self(start, ref, visited):
+                            return True
+            return False
+
+        for name in self.st.structs:
+            if reaches_self(name, name, {name}):
+                node = self._raw_structs[name][1]
+                self.error(node, f"Struct '{name}' contains itself by value (directly or indirectly)")
 
     def _resolve_struct(self, name):
         """Resolve one struct's field types, registering an (initially
@@ -415,11 +451,21 @@ class Analyzer:
         self.st.typedefs[name] = resolved
         return resolved
 
-    def _resolve_type(self, node):
+    def _resolve_type(self, node, _array_depth=0):
         """Turn a parser-produced type Node (`Type`, `StructType`,
         `ArrayType`, or `TupleType`) into a type descriptor tuple,
         resolving typedef aliases and nested struct/array/tuple shapes
-        recursively."""
+        recursively.
+
+        `_array_depth` counts how many `ArrayType` levels deep the current
+        node is from the entry call (0 at every external call site; bumped
+        by 1 only when recursing into an `ArrayType`'s own `base`). Only
+        the outermost dimension (depth 0) may have a non-literal size:
+        `ir.py`'s `_gen_array_declare` recovers exactly one runtime-computed
+        size expression from the declarator's `ArrayType` node (the
+        outermost one) and has no way to compute a second, so a non-literal
+        *inner* dimension (e.g. `int grid[3][n];`) is rejected here instead
+        of silently becoming a zero-length dimension at runtime."""
         if node is None:
             return T_ERROR
         if node.kind == "Type":
@@ -439,7 +485,7 @@ class Analyzer:
                 return T_ERROR
             return t_struct(name)
         if node.kind == "ArrayType":
-            base = self._resolve_type(node.fields["base"])
+            base = self._resolve_type(node.fields["base"], _array_depth=_array_depth + 1)
             size_node = node.fields.get("size")
             size = self._const_int_or_none(size_node)
             if size is None and size_node is not None:
@@ -453,6 +499,8 @@ class Analyzer:
                 size_type = self._infer_expr(size_node)
                 if not (is_error(size_type) or types_equal(size_type, T_INT)):
                     self.error(size_node, f"Array size must be of type 'int', got '{type_name(size_type)}'")
+                elif _array_depth > 0:
+                    self.error(size_node, "Only the outermost array dimension may use a non-literal size")
             return t_array(base, size)
         if node.kind == "TupleType":
             return t_tuple([self._resolve_type(e) for e in node.fields["elements"]])

@@ -93,6 +93,34 @@ class Const:
         return repr(self.value)
 
 
+class TypeDesc:
+    """A full runtime-construction shape for an array element or struct
+    field type - unlike `IRGenerator._type_tag`'s flattened string, this
+    keeps enough of a nested array/struct's shape (element type, size,
+    struct name) for `interpreter.py`'s `_make_default` to recursively
+    build a correctly-nested default value (a fresh array-of-structs, a
+    struct with an array field, ...) instead of the flat `DEFAULTS` lookup
+    that only knows the five primitives. Deliberately separate from
+    `_type_tag`, which still drives `var_types`/`CAST` targets/`--symbols`
+    output and must stay untouched so those (and the committed golden IR
+    files) stay byte-identical."""
+
+    __slots__ = ("tag", "elem", "size", "name")
+
+    def __init__(self, tag, elem=None, size=None, name=None):
+        self.tag = tag  # a DEFAULTS key ("int"/"float"/"char"/"string"/"bool") | "array" | "struct"
+        self.elem = elem  # TypeDesc, only set when tag == "array"
+        self.size = size  # int or None, only set when tag == "array"
+        self.name = name  # struct name, only set when tag == "struct"
+
+    def __str__(self):
+        if self.tag == "array":
+            return f"{self.elem}[{'' if self.size is None else self.size}]"
+        if self.tag == "struct":
+            return f"struct {self.name}"
+        return self.tag
+
+
 @dataclass
 class Quad:
     """One quadruple: an opcode plus up to two source operands and a
@@ -190,6 +218,23 @@ class IRGenerator:
         return type_[1] if type_[0] == "prim" else type_[0]
 
     @staticmethod
+    def _type_desc(type_):
+        """Build a `TypeDesc` for a type descriptor - recursively, so a
+        nested array-of-array or array-of-struct keeps its element type and
+        size instead of collapsing to `_type_tag`'s bare `"array"`/
+        `"struct"` string. Used only at the two sites that need to
+        reconstruct a default value at runtime: an array's element-type
+        operand (`ARR_NEW`'s `arg2`) and a struct's per-field type table
+        (`self.structs`)."""
+        if type_[0] == "prim":
+            return TypeDesc(type_[1])
+        if type_[0] == "struct":
+            return TypeDesc("struct", name=type_[1])
+        if type_[0] == "array":
+            return TypeDesc("array", elem=IRGenerator._type_desc(type_[1]), size=type_[2])
+        return TypeDesc("void")
+
+    @staticmethod
     def _default_const(type_):
         """The zero-value a declared-but-uninitialized variable gets:
         `DEFAULTS[tag]` for a primitive type, or `Const(None)` for anything
@@ -214,7 +259,7 @@ class IRGenerator:
         function definition to reach the real entry point.
         """
         self.structs = {
-            name: {"fields": [(fname, self._type_tag(info.fields[fname])) for fname in info.field_order]}
+            name: {"fields": [(fname, self._type_desc(info.fields[fname])) for fname in info.field_order]}
             for name, info in self.st.structs.items()
         }
 
@@ -346,7 +391,7 @@ class IRGenerator:
             `IRGenError`.
         """
         elem_type = type_[1]
-        elem_tag = self._type_tag(elem_type)
+        elem_tag = self._type_desc(elem_type)
         if init is not None and init.kind == "InitializerList":
             values = init.fields["values"]
             self.emit("ARR_NEW", Const(len(values)), elem_tag, sym.ir_name)
