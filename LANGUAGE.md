@@ -1,7 +1,6 @@
 # The Cetirim Language — Programmer's Manual
 
 **Course:** CSC617M — Theory of Programming Languages
-**Group:** 67 Inc.
 
 This is the *language* half of the User's Manual: how to **write programs** in
 Cetirim. For how to **run** the interpreter — CLI flags, output formats, the

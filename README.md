@@ -1,7 +1,6 @@
 # CSC617M Machine Project — Custom Language Interpreter
 
-**Course:** CSC617M — Theory of Programming Languages  
-**Group:** 67 Inc.  
+**Course:** CSC617M — Theory of Programming Languages
 **Current Milestone:** Interpreter (complete)
 
 ---
