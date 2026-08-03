@@ -7,7 +7,7 @@ tool) - this is the project's "interpreter software binaries" deliverable.
 
 Then run it exactly like interpreter.py:
 
-    python cetirim.pyz <source_file> [--ir] [--trace] [--symbols]
+    python cetirim.pyz <source_file> [--ir] [--trace] [--symbols] [-O]
     ./cetirim.pyz <source_file>        (Unix - the archive is directly executable)
 """
 
@@ -30,6 +30,7 @@ MODULES = [
     "parser.py",
     "semantics.py",
     "ir.py",
+    "optimizer.py",  # imported lazily by interpreter.py, but only when -O is passed
     "interpreter.py",
 ]
 

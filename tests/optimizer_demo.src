@@ -1,0 +1,59 @@
+// Feature fixture: a program written to exercise all three IR optimization
+// techniques (see optimizer.py). Run it two ways to see the point:
+//
+//     python interpreter.py tests/optimizer_demo.src        prints X
+//     python interpreter.py tests/optimizer_demo.src -O     prints the same X
+//     python optimizer.py   tests/optimizer_demo.src        shows why it is shorter
+//
+// Every construct below is here for a reason, noted at its use site.
+
+// Write-once literals: the "static variable" case constant propagation
+// substitutes. VERBOSE additionally guards a branch, so folding its
+// condition hands a whole unreachable arm to dead code elimination.
+const int WIDTH = 8;
+const int HEIGHT = 5;
+const bool VERBOSE = false;
+const string TITLE = "Optimizer Demo";
+
+// A local `val` bound to a literal propagates exactly like a global const.
+int area() {
+    val int w = WIDTH;
+    val int h = HEIGHT;
+    return w * h;
+}
+
+// Identity operations for algebraic simplification. Each is applied to `n`
+// directly rather than chained, because `+ 0`, `- 0` and `% 1` are only
+// rewritten for an operand provably typed int - a parameter qualifies, an
+// intermediate temporary does not (see optimizer.py's `_is_int_operand`).
+int identities(int n) {
+    var int scaled, shifted, trimmed, modded, plussed;
+    scaled = n * 1;
+    shifted = n + 0;
+    trimmed = n - 0;
+    modded = n % 1;
+    plussed = +n;
+    return scaled + shifted + trimmed + modded + plussed;
+}
+
+void main() {
+    var int total, tripled;
+    val int unused = 99;          // never read: its store is dead
+    val int folded = 2 * 3 + 4;   // fully constant: folds to 10 at compile time
+
+    print(TITLE);
+
+    if (VERBOSE) {                // condition folds to false: this arm is dead code
+        print("verbose mode is on");
+        print("width", WIDTH, "height", HEIGHT);
+    }
+
+    total = area();
+    print("area:", total);
+
+    tripled = identities(7);
+    print("identities(7):", tripled);
+
+    print("folded constant:", folded);
+    print("perimeter:", 2 * (WIDTH + HEIGHT));
+}
