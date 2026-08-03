@@ -5,8 +5,7 @@ This document is a candid audit of where the interpreter (`semantics.py` →
 deliberate simplifying choice instead of a "correct" one, and where it's
 simply out of scope for this project. It's organized in three tiers:
 
-1. **Intentional design decisions** — made on purpose, defensible, and
-   documented in `CLAUDE.md`. Listed here for completeness, with the
+1. **Intentional design decisions** — made on purpose and defensible. Listed here for completeness, with the
    reasoning restated.
 2. **Known gaps** — real edge cases discovered while building the pipeline
    that weren't hardened against. A dedicated review pass closed every gap

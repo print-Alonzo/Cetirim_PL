@@ -41,7 +41,6 @@ The language supports typed variable/constant declarations, control flow (if-els
 ├── README.md                                   # This file: how to USE the interpreter
 ├── LANGUAGE.md                                 # Programmer's manual: how to WRITE programs in the language
 ├── LIMITATIONS.md                              # Design decisions, known edge cases, scope limits
-├── CLAUDE.md                                   # Implementation notes / architecture guide
 ├── docs/                                       # Course handouts (MP Specs.pdf)
 ├── tests/                                      # 12 feature fixtures (+ golden output) and 17 negative fixtures
 ├── prog1_calculator.src                        # Sample program 1

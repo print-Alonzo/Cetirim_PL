@@ -821,9 +821,7 @@ class Analyzer:
             reported but still produce placeholder T_ERROR-typed symbols
             so the rest of the function can keep being analyzed.
 
-        Every `let`-bound name is always mutable (see CLAUDE.md: neither
-        `let` nor `multi_assign` has a `val`/`const`-style marker in the
-        grammar).
+        Every `let`-bound name is always mutable
         """
         names = decl.fields["names"]
         values = decl.fields["values"]
@@ -1301,8 +1299,8 @@ class Analyzer:
     def _infer_binary(self, node):
         """Type-check one `BinaryExpr` by operator family: arithmetic
         (`+ - * / %`, both operands numeric; `+` additionally rejects
-        `string` - this language has no string concatenation operator, see
-        CLAUDE.md), equality (`== !=`, numeric cross-comparison allowed, or
+        `string` - this language has no string concatenation operator), 
+        equality (`== !=`, numeric cross-comparison allowed, or
         exact type match otherwise), relational (`< > <= >=`, numeric
         only), and logical (`&& ||`, both operands must be exactly
         `bool`)."""
