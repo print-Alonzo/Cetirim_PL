@@ -139,20 +139,52 @@ class Quad:
         return f"({self.op}, {_fmt(self.arg1)}, {_fmt(self.arg2)}, {_fmt(self.result)})"
 
 
+_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\t": "\\t", "\r": "\\r", "\0": "\\0"}
+
+
+def _quote(s):
+    """Render a string/char `Const` value as a double-quoted, escaped
+    literal. Without this a control character inside a constant would be
+    written into the quad listing raw, splitting one quad across two
+    physical lines (a `'\\n'` char) or embedding a NUL (the `char` default
+    `'\\x00'`) that makes the whole `*_ir.txt` file read as binary to
+    grep/diff. Escape spellings match the language's own; anything else
+    non-printable falls back to `\\xNN`.
+
+    Note `Const` carries no type tag (`__slots__ = ("value",)`), so a
+    `char` and a length-1 `string` are both a Python `str` here and render
+    identically - the listing doesn't distinguish them."""
+    out = ['"']
+    for ch in s:
+        if ch in _ESCAPES:
+            out.append(_ESCAPES[ch])
+        elif ch.isprintable():
+            out.append(ch)
+        else:
+            out.append("\\x%02x" % ord(ch))
+    out.append('"')
+    return "".join(out)
+
+
 def _fmt(operand):
     """Render one quad operand for display: unwrap a `Const`'s value
     (rendering bools as the language's own `true`/`false` spelling rather
-    than Python's `True`/`False`), join a tuple of names with commas (used
-    by e.g. `INPUT`'s multi-target result, or `UNPACK`'s - where a `None`
-    entry is a `_` discard slot, rendered as `_` rather than Python's
-    `None` to match the source syntax that produced it), or just `str()` a
-    plain name - a bare `None` prints as `-` to keep the quad table
-    readable."""
+    than Python's `True`/`False`, and string/char values quoted+escaped via
+    `_quote`), join a tuple of names with commas (used by e.g. `INPUT`'s
+    multi-target result, or `UNPACK`'s - where a `None` entry is a `_`
+    discard slot, rendered as `_` rather than Python's `None` to match the
+    source syntax that produced it), or just `str()` a plain name - a bare
+    `None` prints as `-` to keep the quad table readable.
+
+    Only a `Const` is ever quoted; a variable/temporary/label name stays
+    bare, which is what makes the two tellable apart in the listing."""
     if operand is None:
         return "-"
     if isinstance(operand, Const):
         v = operand.value
-        return ("true" if v else "false") if isinstance(v, bool) else str(v)
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        return _quote(v) if isinstance(v, str) else str(v)
     if isinstance(operand, tuple):
         return "(" + ", ".join("_" if x is None else str(x) for x in operand) + ")"
     return str(operand)
