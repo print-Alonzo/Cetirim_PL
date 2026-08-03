@@ -24,10 +24,21 @@ Feature fixtures (FEATURE_FIXTURES, tests/<name>.src + tests/<name>_expected.txt
 programs that exercise a specific language feature outside the five graded
 sample programs. Each is expected to run to completion (exit 0); its
 stdout+stderr is diffed against the committed golden.
+
+Optimizer checks (see optimizer.py) are differential rather than golden-based:
+every positive and feature fixture is additionally run through
+`interpreter.py -O` and must produce byte-identical output and the same exit
+code, and every runtime-error negative fixture must still fail the same way
+with -O. That is the real correctness contract for an optimizer - it may
+change how many quads run, never what they print - and it needs no goldens of
+its own. The one optimizer fixture with a golden is OPTIMIZER_DEMO, whose
+`optimizer.py` report is diffed so a change in what gets optimized shows up
+as a reviewable diff rather than passing silently.
 """
 
 import argparse
 import difflib
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -75,11 +86,17 @@ FEATURE_FIXTURES = [
     "nested_struct",
     "struct_return",
     "param_passing",
+    "optimizer_demo",
 ]
 
+# The fixture whose optimizer report is itself a golden - written to exercise
+# all three techniques at once, so the report doubles as the worked example
+# the README points at.
+OPTIMIZER_DEMO = "optimizer_demo"
 
-def run(script, src, stdin_text=""):
-    args = [sys.executable, script, src]
+
+def run(script, src, stdin_text="", extra_args=()):
+    args = [sys.executable, script, src, *extra_args]
     try:
         return subprocess.run(
             args, cwd=ROOT, input=stdin_text, capture_output=True, text=True,
@@ -204,6 +221,91 @@ def check_feature(name, update):
     return ok
 
 
+def check_optimized(label, src, expected_file, stdin_text=""):
+    """Differential optimizer check: running `src` with `-O` must produce
+    exactly the output its unoptimized golden records, and still exit 0.
+    Reuses the existing golden rather than introducing a second one -
+    sharing the file is the whole point, since an optimizer that needs its
+    own expected output has changed the program's behavior."""
+    result = run("interpreter.py", src, stdin_text, ("-O",))
+    actual = result.stdout + result.stderr
+    expected = expected_file.read_text() if expected_file.exists() else ""
+
+    ok = True
+    if actual != expected:
+        print(f"[FAIL] {label} (-O): optimized output differs from the golden")
+        _print_diff(expected, actual)
+        ok = False
+    if result.returncode != 0:
+        print(f"[FAIL] {label} (-O): exited {result.returncode}, expected 0")
+        ok = False
+    if ok:
+        print(f"[PASS] {label} (-O)")
+    return ok
+
+
+def check_negative_optimized(path, tag, exit_code):
+    """A runtime error must survive optimization. This is what pins the
+    deliberate refusals in optimizer.py's `_fold_value`/`_is_removable`: a
+    division by a literal zero is neither folded nor deleted, so
+    `tests/div_by_zero.src` still reports `[RUNTIME ERROR]` and exits 3
+    instead of being quietly optimized into nothing."""
+    result = run("interpreter.py", str(ROOT / path), extra_args=("-O",))
+    combined = result.stdout + result.stderr
+    ok = tag in combined and result.returncode == exit_code
+    print(f"[{'PASS' if ok else 'FAIL'}] {path} (-O): expected {tag!r} and exit {exit_code}, got exit {result.returncode}")
+    if not ok:
+        print(combined)
+    return ok
+
+
+def check_optimizer_report(update):
+    """Diff the optimizer's own annotated report against a golden, then
+    assert the two properties a golden diff alone wouldn't catch if the
+    report format changed: that the program actually got smaller, and that
+    all three techniques found something to do."""
+    src = f"tests/{OPTIMIZER_DEMO}.src"
+    golden = ROOT / f"tests/{OPTIMIZER_DEMO}_opt.txt"
+    result = run("optimizer.py", src)
+    actual = result.stdout + result.stderr
+
+    if update:
+        golden.write_text(actual)
+        print(f"[UPDATED] tests/{OPTIMIZER_DEMO}_opt")
+        return True
+
+    ok = True
+    expected = golden.read_text() if golden.exists() else ""
+    if actual != expected:
+        print(f"[FAIL] tests/{OPTIMIZER_DEMO}: optimizer report mismatch")
+        _print_diff(expected, actual)
+        ok = False
+    if result.returncode != 0:
+        print(f"[FAIL] tests/{OPTIMIZER_DEMO}: optimizer.py exited {result.returncode}, expected 0")
+        ok = False
+
+    view = run("optimizer.py", src, extra_args=("--json", "-"))
+    try:
+        payload = json.loads(view.stdout)
+    except ValueError as e:
+        print(f"[FAIL] tests/{OPTIMIZER_DEMO}: --json payload is not valid JSON ({e})")
+        return False
+
+    stats = payload["stats"]
+    if stats["optimized_count"] >= stats["original_count"]:
+        print(f"[FAIL] tests/{OPTIMIZER_DEMO}: optimization removed nothing "
+              f"({stats['original_count']} -> {stats['optimized_count']} quads)")
+        ok = False
+    for technique in payload["techniques"]:
+        if stats["by_technique"].get(technique, 0) <= 0:
+            print(f"[FAIL] tests/{OPTIMIZER_DEMO}: technique {technique!r} made no transformations")
+            ok = False
+
+    if ok:
+        print(f"[PASS] tests/{OPTIMIZER_DEMO} (optimizer report)")
+    return ok
+
+
 def main():
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument("--update", action="store_true", help="Regenerate golden files from current output")
@@ -211,11 +313,27 @@ def main():
 
     results = [check_positive(name, args.update) for name in PROGRAMS]
     results += [check_feature(name, args.update) for name in FEATURE_FIXTURES]
+    results.append(check_optimizer_report(args.update))
     if args.update:
         print("Golden files updated.")
         return
 
     results += [check_negative(path, tag, exit_code) for path, tag, exit_code in NEGATIVE_FIXTURES]
+
+    for name in PROGRAMS:
+        in_file = ROOT / f"{name}.in"
+        results.append(check_optimized(
+            name, f"{name}.src", ROOT / f"{name}_expected.txt",
+            in_file.read_text() if in_file.exists() else "",
+        ))
+    for name in FEATURE_FIXTURES:
+        results.append(check_optimized(
+            f"tests/{name}", f"tests/{name}.src", ROOT / f"tests/{name}_expected.txt",
+        ))
+    results += [
+        check_negative_optimized(path, tag, exit_code)
+        for path, tag, exit_code in NEGATIVE_FIXTURES if exit_code == 3
+    ]
 
     passed, total = sum(results), len(results)
     print(f"\n{passed}/{total} checks passed")

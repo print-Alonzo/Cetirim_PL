@@ -31,11 +31,10 @@ project's design assumptions, for free.
 """
 
 import argparse
-import math
 import operator
 import sys
 
-from ir import Const, IRGenError, format_quads, generate
+from ir import Const, IRGenError, _div, _mod, format_quads, generate
 from parser import parse_source
 from semantics import analyze
 
@@ -81,38 +80,9 @@ class StructValue(dict):
         self.type_name = type_name
 
 
-def _div(a, b):
-    """DIV handler: `int / int` truncates toward zero (C-style). Raises an explicit
-    `ZeroDivisionError` with a fixed message rather than letting Python's
-    own division raise one, since that message's wording is Python-version-
-    dependent. The int path uses `//` with a sign correction instead of
-    `int(a / b)`, which round-trips through a float and both loses
-    precision on large ints and can raise an uncaught `OverflowError`."""
-    if b == 0:
-        raise ZeroDivisionError("Division by zero")
-    if isinstance(a, float) or isinstance(b, float):
-        return a / b
-    q = a // b
-    if q < 0 and q * b != a:
-        q += 1  # // floors; truncate toward zero instead, C-style
-    return q
-
-
-def _mod(a, b):
-    """MOD handler: truncated (C-style) modulo, matching `_div`'s
-    truncated division - the result takes the sign of the dividend, unlike
-    Python's `%` which is floor-based and takes the sign of the divisor.
-    Same explicit zero check and fixed message as `_div`."""
-    if b == 0:
-        raise ZeroDivisionError("Modulo by zero")
-    if isinstance(a, float) or isinstance(b, float):
-        return math.fmod(a, b)
-    r = a % b
-    if r != 0 and (r < 0) != (a < 0):
-        r -= b
-    return r
-
-
+# DIV/MOD's C-style truncated semantics live in ir.py so `optimizer.py`'s
+# constant folder can fold a DIV/MOD quad through the exact same code this
+# VM executes it with - see ir._div's docstring.
 BINARY_OPS = {
     "ADD": operator.add, "SUB": operator.sub, "MUL": operator.mul, "DIV": _div, "MOD": _mod,
     "EQ": operator.eq, "NE": operator.ne, "LT": operator.lt, "GT": operator.gt,
@@ -564,6 +534,7 @@ def main():
     cli.add_argument("--ir", action="store_true", help="Print the generated intermediate code (quadruples) before running")
     cli.add_argument("--symbols", action="store_true", help="Print function/struct/variable metadata before running")
     cli.add_argument("--trace", action="store_true", help="Print each quad to stderr as it executes")
+    cli.add_argument("-O", "--optimize", action="store_true", help="Optimize the intermediate code before running it (see optimizer.py)")
     cli.add_argument("--max-steps", type=int, default=10_000_000, help="Abort with a runtime error after this many executed quads (0 = unlimited)")
     cli.add_argument("--max-depth", type=int, default=10_000, help="Abort with a runtime error past this call-stack depth (0 = unlimited)")
     args = cli.parse_args()
@@ -596,8 +567,20 @@ def main():
         print(f"[IR ERROR] {e}", file=sys.stderr)
         sys.exit(2)
 
+    if args.optimize:
+        # Imported lazily so the default (unoptimized) path doesn't pay for
+        # loading a module it never uses.
+        import optimizer
+        try:
+            result = optimizer.optimize(quads, functions, var_types)
+        except optimizer.OptimizerError as e:
+            print(f"[OPTIMIZER ERROR] {e}", file=sys.stderr)
+            sys.exit(2)
+        quads, functions = result.quads, result.functions
+
     if args.ir:
-        print("Intermediate Code (Quadruples):")
+        label = "Optimized Intermediate Code" if args.optimize else "Intermediate Code"
+        print(f"{label} (Quadruples):")
         print(format_quads(quads))
         print()
 

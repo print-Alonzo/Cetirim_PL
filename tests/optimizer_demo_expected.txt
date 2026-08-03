@@ -1,0 +1,5 @@
+Optimizer Demo
+area: 40
+identities(7): 28
+folded constant: 10
+perimeter: 26

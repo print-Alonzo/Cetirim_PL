@@ -1,0 +1,254 @@
+[IR OPTIMIZATION] optimizer_demo.src
+  Techniques : constant-propagation, algebraic-simplification, dead-code-elimination
+  Quads      : 86 -> 54 (32 removed, 9 rewritten)
+  Rounds     : 3
+
+Optimized Intermediate Code (Quadruples):
+00: (JMP, -, -, L1)
+01: (FUNC_BEGIN, -, -, area)
+02: (RETURN, 40, -, -)
+03: (FUNC_END, -, -, area)
+04: (FUNC_BEGIN, -, -, identities)
+05: (ASSIGN, 0, -, identities.scaled)
+06: (ASSIGN, 0, -, identities.shifted)
+07: (ASSIGN, 0, -, identities.trimmed)
+08: (ASSIGN, 0, -, identities.plussed)
+09: (ASSIGN, identities.n, -, _t2)
+10: (ASSIGN, _t2, -, identities.scaled)
+11: (ASSIGN, identities.n, -, _t3)
+12: (ASSIGN, _t3, -, identities.shifted)
+13: (ASSIGN, identities.n, -, _t4)
+14: (ASSIGN, _t4, -, identities.trimmed)
+15: (ASSIGN, identities.n, -, _t6)
+16: (ASSIGN, _t6, -, identities.plussed)
+17: (ADD, identities.scaled, identities.shifted, _t7)
+18: (ADD, _t7, identities.trimmed, _t8)
+19: (ADD, _t8, 0, _t9)
+20: (ADD, _t9, identities.plussed, _t10)
+21: (RETURN, _t10, -, -)
+22: (FUNC_END, -, -, identities)
+23: (FUNC_BEGIN, -, -, main)
+24: (ASSIGN, 0, -, main.total)
+25: (ASSIGN, 0, -, main.tripled)
+26: (PRINT, "Optimizer Demo", -, -)
+27: (PRINTLN, -, -, -)
+28: (CALL, area, 0, _t13)
+29: (ASSIGN, _t13, -, main.total)
+30: (PRINT, "area:", -, -)
+31: (PRINT_SEP, -, -, -)
+32: (PRINT, main.total, -, -)
+33: (PRINTLN, -, -, -)
+34: (PARAM, 7, -, -)
+35: (CALL, identities, 1, _t14)
+36: (ASSIGN, _t14, -, main.tripled)
+37: (PRINT, "identities(7):", -, -)
+38: (PRINT_SEP, -, -, -)
+39: (PRINT, main.tripled, -, -)
+40: (PRINTLN, -, -, -)
+41: (PRINT, "folded constant:", -, -)
+42: (PRINT_SEP, -, -, -)
+43: (PRINT, 10, -, -)
+44: (PRINTLN, -, -, -)
+45: (PRINT, "perimeter:", -, -)
+46: (PRINT_SEP, -, -, -)
+47: (PRINT, 26, -, -)
+48: (PRINTLN, -, -, -)
+49: (RETURN, -, -, -)
+50: (FUNC_END, -, -, main)
+51: (LABEL, -, -, L1)
+52: (CALL, main, 0, -)
+53: (HALT, -, -, -)
+
+Transformations (59):
+
+  constant-propagation (22):
+    #0006 Line 20  (ASSIGN, WIDTH, -, area.w)
+        propagate            -> (ASSIGN, 8, -, area.w)
+        WIDTH is 8
+    #0007 Line 21  (ASSIGN, HEIGHT, -, area.h)
+        propagate            -> (ASSIGN, 5, -, area.h)
+        HEIGHT is 5
+    #0008 Line 22  (MUL, area.w, area.h, _t1)
+        propagate            -> (MUL, 8, 5, _t1)
+        area.w is 8; area.h is 5
+    #0008 Line 22  (MUL, 8, 5, _t1)
+        fold                 -> (ASSIGN, 40, -, _t1)
+        folded 8 * 5 -> 40
+    #0009 Line 22  (RETURN, _t1, -, -)
+        propagate            -> (RETURN, 40, -, -)
+        _t1 is 40
+    #0039 Line 42  (MUL, 2, 3, _t11)
+        fold                 -> (ASSIGN, 6, -, _t11)
+        folded 2 * 3 -> 6
+    #0040 Line 42  (ADD, _t11, 4, _t12)
+        propagate            -> (ADD, 6, 4, _t12)
+        _t11 is 6
+    #0040 Line 42  (ADD, 6, 4, _t12)
+        fold                 -> (ASSIGN, 10, -, _t12)
+        folded 6 + 4 -> 10
+    #0041 Line 42  (ASSIGN, _t12, -, main.folded)
+        propagate            -> (ASSIGN, 10, -, main.folded)
+        _t12 is 10
+    #0042 Line 44  (PRINT, TITLE, -, -)
+        propagate            -> (PRINT, "Optimizer Demo", -, -)
+        TITLE is "Optimizer Demo"
+    #0044 Line 46  (JZ, VERBOSE, -, L2)
+        propagate            -> (JZ, false, -, L2)
+        VERBOSE is false
+    #0044 Line 46  (JZ, false, -, L2)
+        fold                 -> (JMP, -, -, L2)
+        condition is always false; branch is always taken
+    #0049 Line 48  (PRINT, WIDTH, -, -)
+        propagate            -> (PRINT, 8, -, -)
+        WIDTH is 8
+    #0053 Line 48  (PRINT, HEIGHT, -, -)
+        propagate            -> (PRINT, 5, -, -)
+        HEIGHT is 5
+    #0077 Line 58  (ADD, WIDTH, HEIGHT, _t15)
+        propagate            -> (ADD, 8, 5, _t15)
+        WIDTH is 8; HEIGHT is 5
+    #0077 Line 58  (ADD, 8, 5, _t15)
+        fold                 -> (ASSIGN, 13, -, _t15)
+        folded 8 + 5 -> 13
+    #0078 Line 58  (MUL, 2, _t15, _t16)
+        propagate            -> (MUL, 2, 13, _t16)
+        _t15 is 13
+    #0078 Line 58  (MUL, 2, 13, _t16)
+        fold                 -> (ASSIGN, 26, -, _t16)
+        folded 2 * 13 -> 26
+    #0079 Line 58  (PRINT, _t16, -, -)
+        propagate            -> (PRINT, 26, -, -)
+        _t16 is 26
+    #0025 Line 34  (ASSIGN, _t5, -, identities.modded)
+        propagate            -> (ASSIGN, 0, -, identities.modded)
+        _t5 is 0
+    #0030 Line 36  (ADD, _t8, identities.modded, _t9)
+        propagate            -> (ADD, _t8, 0, _t9)
+        identities.modded is 0
+    #0073 Line 57  (PRINT, main.folded, -, -)
+        propagate            -> (PRINT, 10, -, -)
+        main.folded is 10
+
+  algebraic-simplification (5):
+    #0018 Line 31  (MUL, identities.n, 1, _t2)
+        simplify             -> (ASSIGN, identities.n, -, _t2)
+        x * 1 -> x
+    #0020 Line 32  (ADD, identities.n, 0, _t3)
+        simplify             -> (ASSIGN, identities.n, -, _t3)
+        x + 0 -> x
+    #0022 Line 33  (SUB, identities.n, 0, _t4)
+        simplify             -> (ASSIGN, identities.n, -, _t4)
+        x - 0 -> x
+    #0024 Line 34  (MOD, identities.n, 1, _t5)
+        simplify             -> (ASSIGN, 0, -, _t5)
+        x % 1 -> 0
+    #0026 Line 35  (UPLUS, identities.n, -, _t6)
+        simplify             -> (ASSIGN, identities.n, -, _t6)
+        unary + is the identity
+
+  dead-code-elimination (32):
+    #0010 Line 22  (RETURN, -, -, -)
+        remove-unreachable   -> (removed)
+        unreachable: control never falls through to here
+    #0033 Line 36  (RETURN, -, -, -)
+        remove-unreachable   -> (removed)
+        unreachable: control never falls through to here
+    #0045 Line 47  (PRINT, "verbose mode is on", -, -)
+        remove-unreachable   -> (removed)
+        unreachable: control never falls through to here
+    #0046 Line 47  (PRINTLN, -, -, -)
+        remove-unreachable   -> (removed)
+        unreachable: control never falls through to here
+    #0047 Line 48  (PRINT, "width", -, -)
+        remove-unreachable   -> (removed)
+        unreachable: control never falls through to here
+    #0048 Line 48  (PRINT_SEP, -, -, -)
+        remove-unreachable   -> (removed)
+        unreachable: control never falls through to here
+    #0049 Line 48  (PRINT, 8, -, -)
+        remove-unreachable   -> (removed)
+        unreachable: control never falls through to here
+    #0050 Line 48  (PRINT_SEP, -, -, -)
+        remove-unreachable   -> (removed)
+        unreachable: control never falls through to here
+    #0051 Line 48  (PRINT, "height", -, -)
+        remove-unreachable   -> (removed)
+        unreachable: control never falls through to here
+    #0052 Line 48  (PRINT_SEP, -, -, -)
+        remove-unreachable   -> (removed)
+        unreachable: control never falls through to here
+    #0053 Line 48  (PRINT, 5, -, -)
+        remove-unreachable   -> (removed)
+        unreachable: control never falls through to here
+    #0054 Line 48  (PRINTLN, -, -, -)
+        remove-unreachable   -> (removed)
+        unreachable: control never falls through to here
+    #0055 Line 48  (JMP, -, -, L3)
+        remove-unreachable   -> (removed)
+        unreachable: control never falls through to here
+    #0044 Line 46  (JMP, -, -, L2)
+        remove-jump          -> (removed)
+        jumps to the label immediately following it
+    #0000 Line 13  (ASSIGN, 8, -, WIDTH)
+        remove-dead          -> (removed)
+        result is never read
+    #0001 Line 14  (ASSIGN, 5, -, HEIGHT)
+        remove-dead          -> (removed)
+        result is never read
+    #0002 Line 15  (ASSIGN, false, -, VERBOSE)
+        remove-dead          -> (removed)
+        result is never read
+    #0003 Line 16  (ASSIGN, "Optimizer Demo", -, TITLE)
+        remove-dead          -> (removed)
+        result is never read
+    #0006 Line 20  (ASSIGN, 8, -, area.w)
+        remove-dead          -> (removed)
+        result is never read
+    #0007 Line 21  (ASSIGN, 5, -, area.h)
+        remove-dead          -> (removed)
+        result is never read
+    #0008 Line 22  (ASSIGN, 40, -, _t1)
+        remove-dead          -> (removed)
+        result is never read
+    #0038 Line 41  (ASSIGN, 99, -, main.unused)
+        remove-dead          -> (removed)
+        result is never read
+    #0039 Line 42  (ASSIGN, 6, -, _t11)
+        remove-dead          -> (removed)
+        result is never read
+    #0040 Line 42  (ASSIGN, 10, -, _t12)
+        remove-dead          -> (removed)
+        result is never read
+    #0077 Line 58  (ASSIGN, 13, -, _t15)
+        remove-dead          -> (removed)
+        result is never read
+    #0078 Line 58  (ASSIGN, 26, -, _t16)
+        remove-dead          -> (removed)
+        result is never read
+    #0056 Line 48  (LABEL, -, -, L2)
+        remove-label         -> (removed)
+        no jump targets this label
+    #0057 Line 48  (LABEL, -, -, L3)
+        remove-label         -> (removed)
+        no jump targets this label
+    #0016 Line 30  (ASSIGN, 0, -, identities.modded)
+        remove-dead          -> (removed)
+        result is never read
+    #0024 Line 34  (ASSIGN, 0, -, _t5)
+        remove-dead          -> (removed)
+        result is never read
+    #0025 Line 34  (ASSIGN, 0, -, identities.modded)
+        remove-dead          -> (removed)
+        result is never read
+    #0041 Line 42  (ASSIGN, 10, -, main.folded)
+        remove-dead          -> (removed)
+        result is never read
+
+Statistics:
+  original quads  : 86
+  optimized quads : 54
+  removed         : 32
+  rewritten       : 9
+  constant-propagation      : 22
+  algebraic-simplification  : 5
+  dead-code-elimination     : 32

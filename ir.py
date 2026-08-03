@@ -53,6 +53,7 @@ or re-checks a type; it only walks the AST and emits quads.
 """
 
 import argparse
+import math
 import os
 import sys
 from dataclasses import dataclass
@@ -63,6 +64,45 @@ from parser import parse_source
 from semantics import T_CHAR, analyze
 
 DEFAULTS = {"int": 0, "float": 0.0, "bool": False, "string": "", "char": "\0"}
+
+
+def _div(a, b):
+    """DIV semantics: `int / int` truncates toward zero (C-style). Raises an explicit
+    `ZeroDivisionError` with a fixed message rather than letting Python's
+    own division raise one, since that message's wording is Python-version-
+    dependent. The int path uses `//` with a sign correction instead of
+    `int(a / b)`, which round-trips through a float and both loses
+    precision on large ints and can raise an uncaught `OverflowError`.
+
+    Lives here rather than in `interpreter.py` (which imports it as its
+    `DIV` handler) so that `optimizer.py`'s constant folder computes a
+    folded `DIV` through the exact same code the VM would have run -
+    one definition, no chance of the folded and executed results
+    disagreeing on truncation direction."""
+    if b == 0:
+        raise ZeroDivisionError("Division by zero")
+    if isinstance(a, float) or isinstance(b, float):
+        return a / b
+    q = a // b
+    if q < 0 and q * b != a:
+        q += 1  # // floors; truncate toward zero instead, C-style
+    return q
+
+
+def _mod(a, b):
+    """MOD semantics: truncated (C-style) modulo, matching `_div`'s
+    truncated division - the result takes the sign of the dividend, unlike
+    Python's `%` which is floor-based and takes the sign of the divisor.
+    Same explicit zero check and fixed message as `_div`, and shared with
+    `optimizer.py`'s folder for the same reason."""
+    if b == 0:
+        raise ZeroDivisionError("Modulo by zero")
+    if isinstance(a, float) or isinstance(b, float):
+        return math.fmod(a, b)
+    r = a % b
+    if r != 0 and (r < 0) != (a < 0):
+        r -= b
+    return r
 
 BINARY_OPCODE = {
     "+": "ADD", "-": "SUB", "*": "MUL", "/": "DIV", "%": "MOD",
