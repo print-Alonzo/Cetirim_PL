@@ -1,0 +1,4 @@
+scalar after callee assigned it: 1
+array element after callee assigned it: 999
+struct field after callee assigned it: 999
+scalar updated via return value: 2

@@ -1,0 +1,54 @@
+// Feature fixture: pins the language's parameter-passing scheme.
+// Scalars are call-by-value; arrays and structs are by reference.
+// No sample program mutates a parameter, so without this fixture the
+// documented scheme (LANGUAGE.md, "Functions and parameter passing")
+// had nothing holding it in place.
+
+struct Box {
+    int v;
+};
+
+// Scalar parameter: the callee's write is local to its own frame.
+void mutate_scalar(int n) {
+    n = 999;
+}
+
+// Array parameter: the caller and callee share one underlying array.
+void mutate_array(int a[]) {
+    a[0] = 999;
+}
+
+// Struct parameter: likewise shared, so a field write is visible outside.
+void mutate_struct(struct Box b) {
+    b.v = 999;
+}
+
+// A scalar returned out of the callee is the way to "modify" a caller's
+// scalar, since assigning the parameter itself cannot.
+int bumped(int n) {
+    return n + 1;
+}
+
+void main() {
+    var int s;
+    var int arr[3];
+    var struct Box bx;
+
+    arr[0] = 1;
+    arr[1] = 2;
+    arr[2] = 3;
+
+    s = 1;
+    mutate_scalar(s);
+    print("scalar after callee assigned it:", s);
+
+    mutate_array(arr);
+    print("array element after callee assigned it:", arr[0]);
+
+    bx.v = 1;
+    mutate_struct(bx);
+    print("struct field after callee assigned it:", bx.v);
+
+    s = bumped(s);
+    print("scalar updated via return value:", s);
+}

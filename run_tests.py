@@ -74,6 +74,7 @@ FEATURE_FIXTURES = [
     "struct_array",
     "nested_struct",
     "struct_return",
+    "param_passing",
 ]
 
 
