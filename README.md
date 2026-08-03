@@ -14,7 +14,12 @@ This repository contains the interpreter project for CSC617M. The group designed
 
 All phases are complete: source runs end to end via `python interpreter.py <file>`, which scans, parses, type-checks, lowers to quadruple intermediate code, and executes it.
 
-The language supports typed variable/constant declarations, control flow (if-else, for, while, repeat-until), functions with multiple parameter-passing schemes, structs, pattern matching, exception handling, and interpolated strings.
+The language supports typed variable/constant declarations, control flow (if-else, for, while, repeat-until), functions (scalars passed by value, arrays and structs by reference), structs, pattern matching, exception handling, and interpolated strings.
+
+> **This README is the manual for *using the interpreter*.** For how to *write
+> programs in the language* — syntax, types, operators and precedence, control
+> flow, functions and the parameter-passing scheme, structs, `match`,
+> exceptions — see **[`LANGUAGE.md`](LANGUAGE.md)**.
 
 ---
 
@@ -31,7 +36,14 @@ The language supports typed variable/constant declarations, control flow (if-els
 ├── ir.py                                       # Intermediate code generator: AST + SymbolTable -> quadruples
 ├── interpreter.py                              # VM: executes quadruples; CLI entry point for running a program
 ├── run_tests.py                                # Golden-output test runner (--update to regenerate goldens)
-├── tests/                                      # Negative fixtures (lexical/syntax/semantic error cases)
+├── build.py                                    # Packages the runtime modules into cetirim.pyz (stdlib zipapp)
+├── cetirim.pyz                                 # Built standalone binary — rebuild with `python build.py`
+├── README.md                                   # This file: how to USE the interpreter
+├── LANGUAGE.md                                 # Programmer's manual: how to WRITE programs in the language
+├── LIMITATIONS.md                              # Design decisions, known edge cases, scope limits
+├── CLAUDE.md                                   # Implementation notes / architecture guide
+├── docs/                                       # Course handouts (MP Specs.pdf)
+├── tests/                                      # 12 feature fixtures (+ golden output) and 17 negative fixtures
 ├── prog1_calculator.src                        # Sample program 1
 ├── prog1_calculator_tokens.txt                 # Scanner output for prog1
 ├── prog1_calculator.in                         # stdin fixture for prog1's input() calls
@@ -53,8 +65,7 @@ The language supports typed variable/constant declarations, control flow (if-els
 ├── prog5_advanced.src                          # Sample program 5
 ├── prog5_advanced_tokens.txt                   # Scanner output for prog5
 ├── prog5_advanced_ir.txt                       # Committed quadruple dump for prog5
-├── prog5_advanced_expected.txt                 # Golden program output for prog5
-└── README.md
+└── prog5_advanced_expected.txt                 # Golden program output for prog5
 ```
 
 ---
@@ -169,6 +180,11 @@ python interpreter.py <source_file> --ir --trace
 
 # Print symbol-table metadata (functions, structs, variable types) before running
 python interpreter.py <source_file> --symbols
+
+# Cap total executed quads / call-stack depth, so an infinite loop or runaway
+# recursion fails with a diagnosable [RUNTIME ERROR] instead of hanging.
+# Defaults are 10,000,000 and 10,000; pass 0 to disable either cap.
+python interpreter.py <source_file> --max-steps <N> --max-depth <N>
 ```
 
 ### Example
@@ -202,14 +218,26 @@ python ir.py <source_file> -o <output_file> --symbols
 ## Running the Test Suite
 
 ```bash
-# Diff each sample program's compiled IR + executed output against the
-# committed goldens, and check that the negative fixtures under tests/
-# fail at the right phase
+# Diff each sample program's scanner token stream, compiled IR, and executed
+# output against the committed goldens; run the feature fixtures under tests/
+# and diff their output; and check that the negative fixtures fail at the
+# right phase with the right exit status
 python run_tests.py
 
 # Regenerate the golden files after an intentional behavior change
 python run_tests.py --update
 ```
+
+The suite is **34 checks**: 5 sample programs (token stream + IR + output each),
+12 feature fixtures under `tests/` (one language feature apiece — dynamic array
+sizes, default parameters, `_` discard, parameter passing, nested structs, …),
+and 17 negative fixtures that must fail at a specific phase (exit `2` for
+lexical/syntax/semantic/IR errors, `3` for runtime errors).
+
+Note that `--update` rewrites the `*_tokens.txt` goldens on every run even when
+nothing changed, because those files embed a live `Scan time` measurement. The
+comparison path strips that line, so it never causes a spurious failure — but it
+does mean `--update` leaves the token files looking modified.
 
 ---
 
@@ -335,7 +363,7 @@ guard  try     catch   finally throw   _
 | `TypedefDecl` | `name`, `aliased_type` |
 | `VarDecl` | `mutability` (`const`/`val`/`var`), `declarators` |
 | `Declarator` | `name`, `type`, `initializer` |
-| `LetDecl` | `names`, `values` |
+| `LetDecl` | `names` (a `None` entry is a `_` discard slot), `values` |
 | `Block` | `declarations`, `statements` |
 | `IfStmt` | `condition`, `then`, `else` |
 | `ForStmt` | `init`, `condition`, `update`, `body` |
@@ -365,7 +393,7 @@ guard  try     catch   finally throw   _
 | `ExprStmt` | `expression` |
 | `MultiAssign` | `lvalues`, `values` |
 | `NamedArg` | `name`, `value` |
-| `Param` | `name`, `type` |
+| `Param` | `name`, `type`, `default` (`None`, or a literal `Literal` node) |
 | `Field` | `name`, `type` |
 | `InitializerList` | `values` |
 | `Type` | `name` |
