@@ -2,7 +2,7 @@
 // Demonstrates: struct, typedef (alias & inline struct def), empty struct body,
 //               match statement (with relational pattern, no wildcard),
 //               match expression, struct member access (.),
-//               guard, try/catch/finally, multiple catch, try without finally,
+//               guard, try/catch/finally, try without finally,
 //               throw, string & char literals, escape sequences,
 //               interpolated strings, bool type
 
@@ -111,14 +111,11 @@ void main() {
         false => print("p is false");
     }
 
-    // Multiple catch clauses (catch_list → catch_clause catch_list)
     try {
         validate_id(20220001);   // valid
         validate_id(-5);         // throws
     } catch (e) {
         print("Caught exception:", e);
-    } catch (err) {
-        print("Second handler:", err);
     } finally {
         print("Validation routine complete.");
     }

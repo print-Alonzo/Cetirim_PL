@@ -6,6 +6,11 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# ...except the built interpreter binary (build.py's `zipapp` output) -
+# *.py[codz] above also matches *.pyz, which would otherwise silently
+# exclude the project's "interpreter software binaries" deliverable.
+!cetirim.pyz
+
 # C extensions
 *.so
 

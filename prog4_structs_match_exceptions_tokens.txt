@@ -7,7 +7,7 @@
      2 | // Demonstrates: struct, typedef (alias & inline struct def), empty struct body,
      3 | //               match statement (with relational pattern, no wildcard),
      4 | //               match expression, struct member access (.),
-     5 | //               guard, try/catch/finally, multiple catch, try without finally,
+     5 | //               guard, try/catch/finally, try without finally,
      6 | //               throw, string & char literals, escape sequences,
      7 | //               interpolated strings, bool type
      8 | 
@@ -116,45 +116,42 @@
    111 |         false => print("p is false");
    112 |     }
    113 | 
-   114 |     // Multiple catch clauses (catch_list → catch_clause catch_list)
-   115 |     try {
-   116 |         validate_id(20220001);   // valid
-   117 |         validate_id(-5);         // throws
-   118 |     } catch (e) {
-   119 |         print("Caught exception:", e);
-   120 |     } catch (err) {
-   121 |         print("Second handler:", err);
-   122 |     } finally {
-   123 |         print("Validation routine complete.");
-   124 |     }
-   125 | 
-   126 |     // try/catch without finally (finally_clause → ε)
-   127 |     try {
-   128 |         validate_id(99999);
-   129 |     } catch (ex) {
-   130 |         print("Validation passed or caught:", ex);
-   131 |     }
-   132 | 
-   133 |     // Char literals and escape sequences
-   134 |     newline = '\n';
-   135 |     tab = '\t';
-   136 |     quote = '\"';
-   137 |     print("Special chars stored:", newline, tab, quote);
-   138 | 
-   139 |     // String with escape sequences
-   140 |     msg = "Line1\nLine2\tTabbed\\Backslash";
-   141 |     print(msg);
-   142 | 
-   143 |     // Boolean logic
-   144 |     p = true;
-   145 |     q = false;
-   146 |     if (p && !q) {
-   147 |         print("p is true and q is false");
+   114 |     try {
+   115 |         validate_id(20220001);   // valid
+   116 |         validate_id(-5);         // throws
+   117 |     } catch (e) {
+   118 |         print("Caught exception:", e);
+   119 |     } finally {
+   120 |         print("Validation routine complete.");
+   121 |     }
+   122 | 
+   123 |     // try/catch without finally (finally_clause → ε)
+   124 |     try {
+   125 |         validate_id(99999);
+   126 |     } catch (ex) {
+   127 |         print("Validation passed or caught:", ex);
+   128 |     }
+   129 | 
+   130 |     // Char literals and escape sequences
+   131 |     newline = '\n';
+   132 |     tab = '\t';
+   133 |     quote = '\"';
+   134 |     print("Special chars stored:", newline, tab, quote);
+   135 | 
+   136 |     // String with escape sequences
+   137 |     msg = "Line1\nLine2\tTabbed\\Backslash";
+   138 |     print(msg);
+   139 | 
+   140 |     // Boolean logic
+   141 |     p = true;
+   142 |     q = false;
+   143 |     if (p && !q) {
+   144 |         print("p is true and q is false");
+   145 |     }
+   146 |     if (p || q) {
+   147 |         print("At least one is true");
    148 |     }
-   149 |     if (p || q) {
-   150 |         print("At least one is true");
-   151 |     }
-   152 | }
+   149 | }
 
 ========================================================================
   LEXICAL ERRORS  (0 found)
@@ -163,7 +160,7 @@
   None.
 
 ========================================================================
-  TOKEN STREAM  (517 tokens)
+  TOKEN STREAM  (504 tokens)
 ========================================================================
 
       #  TYPE              LEXEME                             LINE    COL  ATTR
@@ -548,165 +545,152 @@
     378  RPAREN            ')'                                 111     36  
     379  SEMICOLON         ';'                                 111     37  
     380  RBRACE            '}'                                 112      5  
-    381  KEYWORD           'try'                               115      5  
-    382  LBRACE            '{'                                 115      9  
-    383  IDENTIFIER        'validate_id'                       116      9  
-    384  LPAREN            '('                                 116     20  
-    385  INTEGER_LIT       '20220001'                          116     21  20220001
-    386  RPAREN            ')'                                 116     29  
-    387  SEMICOLON         ';'                                 116     30  
-    388  IDENTIFIER        'validate_id'                       117      9  
-    389  LPAREN            '('                                 117     20  
-    390  ARITH_OP          '-'                                 117     21  
-    391  INTEGER_LIT       '5'                                 117     22  5
-    392  RPAREN            ')'                                 117     23  
-    393  SEMICOLON         ';'                                 117     24  
-    394  RBRACE            '}'                                 118      5  
-    395  KEYWORD           'catch'                             118      7  
-    396  LPAREN            '('                                 118     13  
-    397  IDENTIFIER        'e'                                 118     14  
-    398  RPAREN            ')'                                 118     15  
-    399  LBRACE            '{'                                 118     17  
-    400  KEYWORD           'print'                             119      9  
-    401  LPAREN            '('                                 119     14  
-    402  STRING_LIT        '"Caught exception:"'               119     15  'Caught exception:'
-    403  COMMA             ','                                 119     34  
-    404  IDENTIFIER        'e'                                 119     36  
-    405  RPAREN            ')'                                 119     37  
-    406  SEMICOLON         ';'                                 119     38  
-    407  RBRACE            '}'                                 120      5  
-    408  KEYWORD           'catch'                             120      7  
-    409  LPAREN            '('                                 120     13  
-    410  IDENTIFIER        'err'                               120     14  
-    411  RPAREN            ')'                                 120     17  
-    412  LBRACE            '{'                                 120     19  
-    413  KEYWORD           'print'                             121      9  
-    414  LPAREN            '('                                 121     14  
-    415  STRING_LIT        '"Second handler:"'                 121     15  'Second handler:'
-    416  COMMA             ','                                 121     32  
-    417  IDENTIFIER        'err'                               121     34  
-    418  RPAREN            ')'                                 121     37  
-    419  SEMICOLON         ';'                                 121     38  
-    420  RBRACE            '}'                                 122      5  
-    421  KEYWORD           'finally'                           122      7  
-    422  LBRACE            '{'                                 122     15  
-    423  KEYWORD           'print'                             123      9  
-    424  LPAREN            '('                                 123     14  
-    425  STRING_LIT        '"Validation routine complete."'    123     15  'Validation routine complete.'
-    426  RPAREN            ')'                                 123     45  
-    427  SEMICOLON         ';'                                 123     46  
-    428  RBRACE            '}'                                 124      5  
-    429  KEYWORD           'try'                               127      5  
-    430  LBRACE            '{'                                 127      9  
-    431  IDENTIFIER        'validate_id'                       128      9  
-    432  LPAREN            '('                                 128     20  
-    433  INTEGER_LIT       '99999'                             128     21  99999
-    434  RPAREN            ')'                                 128     26  
-    435  SEMICOLON         ';'                                 128     27  
-    436  RBRACE            '}'                                 129      5  
-    437  KEYWORD           'catch'                             129      7  
-    438  LPAREN            '('                                 129     13  
-    439  IDENTIFIER        'ex'                                129     14  
-    440  RPAREN            ')'                                 129     16  
-    441  LBRACE            '{'                                 129     18  
-    442  KEYWORD           'print'                             130      9  
-    443  LPAREN            '('                                 130     14  
-    444  STRING_LIT        '"Validation passed or caught:"'    130     15  'Validation passed or caught:'
-    445  COMMA             ','                                 130     45  
-    446  IDENTIFIER        'ex'                                130     47  
-    447  RPAREN            ')'                                 130     49  
-    448  SEMICOLON         ';'                                 130     50  
-    449  RBRACE            '}'                                 131      5  
-    450  IDENTIFIER        'newline'                           134      5  
-    451  ASSIGN_OP         '='                                 134     13  
-    452  CHAR_LIT          "'\n'"                              134     15  '\n'
-    453  SEMICOLON         ';'                                 134     19  
-    454  IDENTIFIER        'tab'                               135      5  
-    455  ASSIGN_OP         '='                                 135      9  
-    456  CHAR_LIT          "'\t'"                              135     11  '\t'
-    457  SEMICOLON         ';'                                 135     15  
-    458  IDENTIFIER        'quote'                             136      5  
-    459  ASSIGN_OP         '='                                 136     11  
-    460  CHAR_LIT          '\'"\''                             136     13  '"'
-    461  SEMICOLON         ';'                                 136     17  
-    462  KEYWORD           'print'                             137      5  
-    463  LPAREN            '('                                 137     10  
-    464  STRING_LIT        '"Special chars stored:"'           137     11  'Special chars stored:'
-    465  COMMA             ','                                 137     34  
-    466  IDENTIFIER        'newline'                           137     36  
-    467  COMMA             ','                                 137     43  
-    468  IDENTIFIER        'tab'                               137     45  
-    469  COMMA             ','                                 137     48  
-    470  IDENTIFIER        'quote'                             137     50  
-    471  RPAREN            ')'                                 137     55  
-    472  SEMICOLON         ';'                                 137     56  
-    473  IDENTIFIER        'msg'                               140      5  
-    474  ASSIGN_OP         '='                                 140      9  
-    475  STRING_LIT        '"Line1\nLine2\tTabbed\\Backslash"'    140     11  'Line1\nLine2\tTabbed\\Backslash'
-    476  SEMICOLON         ';'                                 140     44  
-    477  KEYWORD           'print'                             141      5  
-    478  LPAREN            '('                                 141     10  
-    479  IDENTIFIER        'msg'                               141     11  
-    480  RPAREN            ')'                                 141     14  
-    481  SEMICOLON         ';'                                 141     15  
-    482  IDENTIFIER        'p'                                 144      5  
-    483  ASSIGN_OP         '='                                 144      7  
-    484  BOOL_LIT          'true'                              144      9  True
-    485  SEMICOLON         ';'                                 144     13  
-    486  IDENTIFIER        'q'                                 145      5  
-    487  ASSIGN_OP         '='                                 145      7  
-    488  BOOL_LIT          'false'                             145      9  False
-    489  SEMICOLON         ';'                                 145     14  
-    490  KEYWORD           'if'                                146      5  
-    491  LPAREN            '('                                 146      8  
-    492  IDENTIFIER        'p'                                 146      9  
-    493  LOGIC_OP          '&&'                                146     11  
-    494  LOGIC_OP          '!'                                 146     14  
-    495  IDENTIFIER        'q'                                 146     15  
-    496  RPAREN            ')'                                 146     16  
-    497  LBRACE            '{'                                 146     18  
+    381  KEYWORD           'try'                               114      5  
+    382  LBRACE            '{'                                 114      9  
+    383  IDENTIFIER        'validate_id'                       115      9  
+    384  LPAREN            '('                                 115     20  
+    385  INTEGER_LIT       '20220001'                          115     21  20220001
+    386  RPAREN            ')'                                 115     29  
+    387  SEMICOLON         ';'                                 115     30  
+    388  IDENTIFIER        'validate_id'                       116      9  
+    389  LPAREN            '('                                 116     20  
+    390  ARITH_OP          '-'                                 116     21  
+    391  INTEGER_LIT       '5'                                 116     22  5
+    392  RPAREN            ')'                                 116     23  
+    393  SEMICOLON         ';'                                 116     24  
+    394  RBRACE            '}'                                 117      5  
+    395  KEYWORD           'catch'                             117      7  
+    396  LPAREN            '('                                 117     13  
+    397  IDENTIFIER        'e'                                 117     14  
+    398  RPAREN            ')'                                 117     15  
+    399  LBRACE            '{'                                 117     17  
+    400  KEYWORD           'print'                             118      9  
+    401  LPAREN            '('                                 118     14  
+    402  STRING_LIT        '"Caught exception:"'               118     15  'Caught exception:'
+    403  COMMA             ','                                 118     34  
+    404  IDENTIFIER        'e'                                 118     36  
+    405  RPAREN            ')'                                 118     37  
+    406  SEMICOLON         ';'                                 118     38  
+    407  RBRACE            '}'                                 119      5  
+    408  KEYWORD           'finally'                           119      7  
+    409  LBRACE            '{'                                 119     15  
+    410  KEYWORD           'print'                             120      9  
+    411  LPAREN            '('                                 120     14  
+    412  STRING_LIT        '"Validation routine complete."'    120     15  'Validation routine complete.'
+    413  RPAREN            ')'                                 120     45  
+    414  SEMICOLON         ';'                                 120     46  
+    415  RBRACE            '}'                                 121      5  
+    416  KEYWORD           'try'                               124      5  
+    417  LBRACE            '{'                                 124      9  
+    418  IDENTIFIER        'validate_id'                       125      9  
+    419  LPAREN            '('                                 125     20  
+    420  INTEGER_LIT       '99999'                             125     21  99999
+    421  RPAREN            ')'                                 125     26  
+    422  SEMICOLON         ';'                                 125     27  
+    423  RBRACE            '}'                                 126      5  
+    424  KEYWORD           'catch'                             126      7  
+    425  LPAREN            '('                                 126     13  
+    426  IDENTIFIER        'ex'                                126     14  
+    427  RPAREN            ')'                                 126     16  
+    428  LBRACE            '{'                                 126     18  
+    429  KEYWORD           'print'                             127      9  
+    430  LPAREN            '('                                 127     14  
+    431  STRING_LIT        '"Validation passed or caught:"'    127     15  'Validation passed or caught:'
+    432  COMMA             ','                                 127     45  
+    433  IDENTIFIER        'ex'                                127     47  
+    434  RPAREN            ')'                                 127     49  
+    435  SEMICOLON         ';'                                 127     50  
+    436  RBRACE            '}'                                 128      5  
+    437  IDENTIFIER        'newline'                           131      5  
+    438  ASSIGN_OP         '='                                 131     13  
+    439  CHAR_LIT          "'\n'"                              131     15  '\n'
+    440  SEMICOLON         ';'                                 131     19  
+    441  IDENTIFIER        'tab'                               132      5  
+    442  ASSIGN_OP         '='                                 132      9  
+    443  CHAR_LIT          "'\t'"                              132     11  '\t'
+    444  SEMICOLON         ';'                                 132     15  
+    445  IDENTIFIER        'quote'                             133      5  
+    446  ASSIGN_OP         '='                                 133     11  
+    447  CHAR_LIT          '\'"\''                             133     13  '"'
+    448  SEMICOLON         ';'                                 133     17  
+    449  KEYWORD           'print'                             134      5  
+    450  LPAREN            '('                                 134     10  
+    451  STRING_LIT        '"Special chars stored:"'           134     11  'Special chars stored:'
+    452  COMMA             ','                                 134     34  
+    453  IDENTIFIER        'newline'                           134     36  
+    454  COMMA             ','                                 134     43  
+    455  IDENTIFIER        'tab'                               134     45  
+    456  COMMA             ','                                 134     48  
+    457  IDENTIFIER        'quote'                             134     50  
+    458  RPAREN            ')'                                 134     55  
+    459  SEMICOLON         ';'                                 134     56  
+    460  IDENTIFIER        'msg'                               137      5  
+    461  ASSIGN_OP         '='                                 137      9  
+    462  STRING_LIT        '"Line1\nLine2\tTabbed\\Backslash"'    137     11  'Line1\nLine2\tTabbed\\Backslash'
+    463  SEMICOLON         ';'                                 137     44  
+    464  KEYWORD           'print'                             138      5  
+    465  LPAREN            '('                                 138     10  
+    466  IDENTIFIER        'msg'                               138     11  
+    467  RPAREN            ')'                                 138     14  
+    468  SEMICOLON         ';'                                 138     15  
+    469  IDENTIFIER        'p'                                 141      5  
+    470  ASSIGN_OP         '='                                 141      7  
+    471  BOOL_LIT          'true'                              141      9  True
+    472  SEMICOLON         ';'                                 141     13  
+    473  IDENTIFIER        'q'                                 142      5  
+    474  ASSIGN_OP         '='                                 142      7  
+    475  BOOL_LIT          'false'                             142      9  False
+    476  SEMICOLON         ';'                                 142     14  
+    477  KEYWORD           'if'                                143      5  
+    478  LPAREN            '('                                 143      8  
+    479  IDENTIFIER        'p'                                 143      9  
+    480  LOGIC_OP          '&&'                                143     11  
+    481  LOGIC_OP          '!'                                 143     14  
+    482  IDENTIFIER        'q'                                 143     15  
+    483  RPAREN            ')'                                 143     16  
+    484  LBRACE            '{'                                 143     18  
+    485  KEYWORD           'print'                             144      9  
+    486  LPAREN            '('                                 144     14  
+    487  STRING_LIT        '"p is true and q is false"'        144     15  'p is true and q is false'
+    488  RPAREN            ')'                                 144     41  
+    489  SEMICOLON         ';'                                 144     42  
+    490  RBRACE            '}'                                 145      5  
+    491  KEYWORD           'if'                                146      5  
+    492  LPAREN            '('                                 146      8  
+    493  IDENTIFIER        'p'                                 146      9  
+    494  LOGIC_OP          '||'                                146     11  
+    495  IDENTIFIER        'q'                                 146     14  
+    496  RPAREN            ')'                                 146     15  
+    497  LBRACE            '{'                                 146     17  
     498  KEYWORD           'print'                             147      9  
     499  LPAREN            '('                                 147     14  
-    500  STRING_LIT        '"p is true and q is false"'        147     15  'p is true and q is false'
-    501  RPAREN            ')'                                 147     41  
-    502  SEMICOLON         ';'                                 147     42  
+    500  STRING_LIT        '"At least one is true"'            147     15  'At least one is true'
+    501  RPAREN            ')'                                 147     37  
+    502  SEMICOLON         ';'                                 147     38  
     503  RBRACE            '}'                                 148      5  
-    504  KEYWORD           'if'                                149      5  
-    505  LPAREN            '('                                 149      8  
-    506  IDENTIFIER        'p'                                 149      9  
-    507  LOGIC_OP          '||'                                149     11  
-    508  IDENTIFIER        'q'                                 149     14  
-    509  RPAREN            ')'                                 149     15  
-    510  LBRACE            '{'                                 149     17  
-    511  KEYWORD           'print'                             150      9  
-    512  LPAREN            '('                                 150     14  
-    513  STRING_LIT        '"At least one is true"'            150     15  'At least one is true'
-    514  RPAREN            ')'                                 150     37  
-    515  SEMICOLON         ';'                                 150     38  
-    516  RBRACE            '}'                                 151      5  
-    517  RBRACE            '}'                                 152      1  
-    518  EOF               ''                                  153      1  
+    504  RBRACE            '}'                                 149      1  
+    505  EOF               ''                                  150      1  
 
 ========================================================================
   STATISTICS
 ========================================================================
 
-  Total tokens  : 517
+  Total tokens  : 504
   Total errors  : 0
-  Scan time     : 0.967 ms
-  Source lines  : 153
-  Source chars  : 4014
+  Scan time     : 2.807 ms
+  Source lines  : 150
+  Source chars  : 3870
 
   Token type breakdown:
-    IDENTIFIER            96
-    KEYWORD               80
-    SEMICOLON             64
-    LPAREN                44
-    RPAREN                44
-    STRING_LIT            34
-    LBRACE                27
-    RBRACE                27
-    COMMA                 22
+    IDENTIFIER            94
+    KEYWORD               78
+    SEMICOLON             63
+    LPAREN                42
+    RPAREN                42
+    STRING_LIT            33
+    LBRACE                26
+    RBRACE                26
+    COMMA                 21
     INTEGER_LIT           15
     ASSIGN_OP             15
     MATCH_ARROW           11
@@ -720,3 +704,4 @@
     RANGE_OP              1
     INTERP_STRING         1
     ARITH_OP              1
+

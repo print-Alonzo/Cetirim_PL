@@ -1,0 +1,8 @@
+// Negative fixture: a throw with no matching try/catch propagates all the
+// way out of main as an uncaught exception - a runtime error.
+void thrower() {
+    throw "boom";
+}
+void main() {
+    thrower();
+}

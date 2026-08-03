@@ -1,0 +1,21 @@
+// Feature fixture: a function declaring a `struct X` return type directly
+// (as opposed to going through a typedef alias) - `struct_decl`'s grammar
+// rule must not swallow `struct Point make(...)` as a malformed struct
+// declaration before top_level_function_decl gets a chance to match it.
+struct Point {
+    int x;
+    int y;
+};
+
+struct Point make(int x, int y) {
+    var struct Point p;
+    p.x = x;
+    p.y = y;
+    return p;
+}
+
+void main() {
+    var struct Point a;
+    a = make(3, 4);
+    print(a.x, a.y);
+}

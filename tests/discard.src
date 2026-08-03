@@ -1,0 +1,19 @@
+// Feature fixture: `_` discards a destructured slot instead of binding it,
+// in both `let` and the typed multi-assign form.
+(int, int) pair() {
+    return 42, 7;
+}
+(int, string) info() {
+    return 5, "five";
+}
+
+void main() {
+    let a, _ = pair();
+    let x, y, z = 1, 2, 3;
+    let p, _, r = x, y, z;
+    int n, string _ = info();
+
+    print(a);
+    print(p, r);
+    print(n);
+}

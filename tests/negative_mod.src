@@ -1,0 +1,15 @@
+// Feature fixture: DIV and MOD both use C-style truncated semantics now
+// (result of MOD takes the sign of the dividend), not Python's floor-based
+// // and %.
+void main() {
+    var int a, b;
+    a = -7;
+    b = 3;
+    print(a / b);
+    print(a % b);
+
+    a = 7;
+    b = -3;
+    print(a / b);
+    print(a % b);
+}

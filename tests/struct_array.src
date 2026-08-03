@@ -1,0 +1,21 @@
+// Feature fixture: an array of structs (`var struct Point pts[3];`) - each
+// slot must get its own freshly-constructed struct, not one shared
+// StructValue aliased across every element.
+struct Point {
+    int x;
+    int y;
+};
+
+void main() {
+    var struct Point pts[3];
+    var int i;
+
+    for (i = 0; i < 3; i = i + 1) {
+        pts[i].x = i;
+        pts[i].y = i * 10;
+    }
+
+    for (i = 0; i < 3; i = i + 1) {
+        print(pts[i].x, pts[i].y);
+    }
+}

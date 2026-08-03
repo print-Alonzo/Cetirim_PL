@@ -1,0 +1,14 @@
+// Negative fixture: a non-literal size on an *inner* array dimension is a
+// semantic error - ir.py's _gen_array_declare only recovers one
+// runtime-computed size expression (the outermost), so a dynamic size
+// anywhere else has nowhere to go. Only the outermost dimension (the last
+// bracket written, e.g. `arr[n];`) may be non-literal - see
+// tests/dynamic_array.src for that supported case.
+int f(int n) {
+    var int grid[n][3];
+    return grid[0][0];
+}
+
+void main() {
+    print(f(3));
+}

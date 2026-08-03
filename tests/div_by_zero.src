@@ -1,0 +1,13 @@
+// Negative fixture: division by zero is a runtime error. The offending
+// division is deliberately buried inside a multi-line compound expression,
+// so this also pins that the reported line is the sub-expression's own
+// line (10, "+ (a / b)"), not the enclosing statement's start line (9).
+void main() {
+    var int a, b, c;
+    a = 10;
+    b = 0;
+    c = 1
+        + (a / b)
+        + 2;
+    print(c);
+}

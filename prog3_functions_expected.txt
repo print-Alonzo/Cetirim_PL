@@ -1,0 +1,12 @@
+abs(-15) = 15
+Before swap: x = 10  y = 20
+After swap:  x = 20  y = 10
+Array sum: 30
+Min: 1   Max: 9
+Min: 1 Max: 9 Sum: 30
+Char literal in arithmetic ('a'+0): 97
+5! = 120
+10! = 3628800
+Hello, Alonzo! You have 4 messages.
+Hello, World! You have 0 messages.
+Caught first: first error

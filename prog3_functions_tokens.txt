@@ -7,7 +7,7 @@
      2 | // Demonstrates: function declarations, call by value,
      3 | //               array parameters, multiple return values (multi_type, 3+ types),
      4 | //               return statements, recursive function, let declarations,
-     5 | //               multiple catch clauses, try without finally, char literal in arithmetic
+     5 | //               try without finally, char literal in arithmetic
      6 | 
      7 | // ---- Helper: absolute value (call by value) ----
      8 | int abs_val(int x) {
@@ -111,16 +111,13 @@
    106 |     // Named parameter call (syntax demonstration)
    107 |     print(make_greeting(name: "World", count: 0));
    108 | 
-   109 |     // Multiple catch clauses (catch_list → catch_clause catch_list)
-   110 |     // try without finally (finally_clause → ε)
-   111 |     try {
-   112 |         throw "first error";
-   113 |     } catch (e1) {
-   114 |         print("Caught first:", e1);
-   115 |     } catch (e2) {
-   116 |         print("Caught second:", e2);
-   117 |     }
-   118 | }
+   109 |     // try without finally (finally_clause → ε)
+   110 |     try {
+   111 |         throw "first error";
+   112 |     } catch (e1) {
+   113 |         print("Caught first:", e1);
+   114 |     }
+   115 | }
 
 ========================================================================
   LEXICAL ERRORS  (0 found)
@@ -129,7 +126,7 @@
   None.
 
 ========================================================================
-  TOKEN STREAM  (626 tokens)
+  TOKEN STREAM  (613 tokens)
 ========================================================================
 
       #  TYPE              LEXEME                             LINE    COL  ATTR
@@ -727,67 +724,55 @@
     591  RPAREN            ')'                                 107     48  
     592  RPAREN            ')'                                 107     49  
     593  SEMICOLON         ';'                                 107     50  
-    594  KEYWORD           'try'                               111      5  
-    595  LBRACE            '{'                                 111      9  
-    596  KEYWORD           'throw'                             112      9  
-    597  STRING_LIT        '"first error"'                     112     15  'first error'
-    598  SEMICOLON         ';'                                 112     28  
-    599  RBRACE            '}'                                 113      5  
-    600  KEYWORD           'catch'                             113      7  
-    601  LPAREN            '('                                 113     13  
-    602  IDENTIFIER        'e1'                                113     14  
-    603  RPAREN            ')'                                 113     16  
-    604  LBRACE            '{'                                 113     18  
-    605  KEYWORD           'print'                             114      9  
-    606  LPAREN            '('                                 114     14  
-    607  STRING_LIT        '"Caught first:"'                   114     15  'Caught first:'
-    608  COMMA             ','                                 114     30  
-    609  IDENTIFIER        'e1'                                114     32  
-    610  RPAREN            ')'                                 114     34  
-    611  SEMICOLON         ';'                                 114     35  
-    612  RBRACE            '}'                                 115      5  
-    613  KEYWORD           'catch'                             115      7  
-    614  LPAREN            '('                                 115     13  
-    615  IDENTIFIER        'e2'                                115     14  
-    616  RPAREN            ')'                                 115     16  
-    617  LBRACE            '{'                                 115     18  
-    618  KEYWORD           'print'                             116      9  
-    619  LPAREN            '('                                 116     14  
-    620  STRING_LIT        '"Caught second:"'                  116     15  'Caught second:'
-    621  COMMA             ','                                 116     31  
-    622  IDENTIFIER        'e2'                                116     33  
-    623  RPAREN            ')'                                 116     35  
-    624  SEMICOLON         ';'                                 116     36  
-    625  RBRACE            '}'                                 117      5  
-    626  RBRACE            '}'                                 118      1  
-    627  EOF               ''                                  119      1  
+    594  KEYWORD           'try'                               110      5  
+    595  LBRACE            '{'                                 110      9  
+    596  KEYWORD           'throw'                             111      9  
+    597  STRING_LIT        '"first error"'                     111     15  'first error'
+    598  SEMICOLON         ';'                                 111     28  
+    599  RBRACE            '}'                                 112      5  
+    600  KEYWORD           'catch'                             112      7  
+    601  LPAREN            '('                                 112     13  
+    602  IDENTIFIER        'e1'                                112     14  
+    603  RPAREN            ')'                                 112     16  
+    604  LBRACE            '{'                                 112     18  
+    605  KEYWORD           'print'                             113      9  
+    606  LPAREN            '('                                 113     14  
+    607  STRING_LIT        '"Caught first:"'                   113     15  'Caught first:'
+    608  COMMA             ','                                 113     30  
+    609  IDENTIFIER        'e1'                                113     32  
+    610  RPAREN            ')'                                 113     34  
+    611  SEMICOLON         ';'                                 113     35  
+    612  RBRACE            '}'                                 114      5  
+    613  RBRACE            '}'                                 115      1  
+    614  EOF               ''                                  116      1  
 
 ========================================================================
   STATISTICS
 ========================================================================
 
-  Total tokens  : 626
+  Total tokens  : 613
   Total errors  : 0
-  Scan time     : 0.945 ms
-  Source lines  : 119
-  Source chars  : 2987
+  Scan time     : 1.782 ms
+  Source lines  : 116
+  Source chars  : 2838
 
   Token type breakdown:
-    IDENTIFIER            158
-    KEYWORD               77
-    SEMICOLON             59
-    COMMA                 58
-    LPAREN                45
-    RPAREN                45
+    IDENTIFIER            156
+    KEYWORD               75
+    SEMICOLON             58
+    COMMA                 57
+    LPAREN                43
+    RPAREN                43
     INTEGER_LIT           34
     ASSIGN_OP             30
-    LBRACE                21
-    RBRACE                21
-    STRING_LIT            19
+    LBRACE                20
+    RBRACE                20
     LBRACKET              18
     RBRACKET              18
+    STRING_LIT            18
     ARITH_OP              10
     REL_OP                9
     COLON                 2
     INTERP_STRING         1
     CHAR_LIT              1
+
