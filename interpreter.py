@@ -82,8 +82,7 @@ class StructValue(dict):
 
 
 def _div(a, b):
-    """DIV handler: `int / int` truncates toward zero (C-style), matching
-    the language design decision in CLAUDE.md. Raises an explicit
+    """DIV handler: `int / int` truncates toward zero (C-style). Raises an explicit
     `ZeroDivisionError` with a fixed message rather than letting Python's
     own division raise one, since that message's wording is Python-version-
     dependent. The int path uses `//` with a sign correction instead of

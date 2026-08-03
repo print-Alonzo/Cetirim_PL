@@ -298,8 +298,8 @@ GRAMMAR["initializer"] = Rule(_initializer_fn)
 def _const_declarator_fn(ps, committed):
     """A `const` declarator: `declarator_name '=' literal_value`. Unlike
     `val`/`var`, the right-hand side must be a bare literal, not an
-    arbitrary expression - this is a deliberate language design choice
-    (see CLAUDE.md), enforced here by calling `literal_value` instead of
+    arbitrary expression - this is a deliberate language design choice, 
+    enforced here by calling `literal_value` instead of
     `initializer`/`expression`."""
     name_info = Ref("declarator_name").run(ps, True)
     Term(TT.ASSIGN_OP, msg="Expected '=' after const declarator name").run(ps, True)
@@ -569,14 +569,13 @@ GRAMMAR["comparison"] = chainl(
 def _is_int_literal(node):
     """True if `node` is a bare `INTEGER_LIT` literal - used by
     `_range_expr_fn` to enforce that `..` operands are integer literals,
-    not arbitrary integer-typed expressions (a language design choice, see
-    CLAUDE.md)."""
+    not arbitrary integer-typed expressions (a language design choice"""
     return isinstance(node, Node) and node.kind == "Literal" and node.fields.get("token_type") == TT.INTEGER_LIT
 
 
 def _range_expr_fn(ps, committed):
-    """`range_expr := term ('..' term)*` - `a..b` is inclusive (see
-    CLAUDE.md) and, as a language design choice, both operands must be
+    """`range_expr := term ('..' term)*` - `a..b` is inclusive 
+    and, as a language design choice, both operands must be
     integer *literals* (not arbitrary expressions, and not even a variable
     holding an int) - checked here, at parse time, rather than left to
     semantics.py, since it's a purely syntactic literal-shape restriction

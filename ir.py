@@ -1191,8 +1191,7 @@ class IRGenerator:
         `Literal`s and embedded expression Nodes - see grammar.py's
         `_build_interp_string_node`) are each converted to a string via
         `TOSTR`, then folded together left-to-right with `CONCAT` - this is
-        the language's *only* string-concatenation mechanism (see
-        CLAUDE.md: `+` is numeric-only)."""
+        the language's *only* string-concatenation mechanism"""
         parts = node.fields["parts"]
         if not parts:
             return Const("")
