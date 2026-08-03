@@ -97,6 +97,44 @@ left out because they're outside this project's scope:
     that reaches a join point along both predecessors (e.g. assigned the
     same literal in both arms of an `if`) is not propagated past the merge.
     The known-constants table is cleared at every `LABEL`.
+
+    Worked example. `x` is provably `5` at the `return` — both arms assign
+    that same literal, and no other path reaches the merge:
+
+    ```
+    int pick(int c) {
+        var int x;
+        if (c > 0) { x = 5; } else { x = 5; }
+        return x;
+    }
+    ```
+
+    Even under `-O`, that still compiles to a variable read:
+
+    ```
+    02: (ASSIGN, 0, -, pick.x)
+    03: (GT, pick.c, 0, _t1)
+    04: (JZ, _t1, -, L2)
+    05: (ASSIGN, 5, -, pick.x)     then-arm
+    06: (JMP, -, -, L3)
+    07: (LABEL, -, -, L2)
+    08: (ASSIGN, 5, -, pick.x)     else-arm, same literal
+    09: (LABEL, -, -, L3)
+    10: (RETURN, pick.x, -, -)     <- not folded to (RETURN, 5, -, -)
+    ```
+
+    A dataflow-based optimizer merges `L3`'s two predecessors, proves
+    `x = 5` there, and emits `(RETURN, 5, -, -)`, deleting both stores and
+    the entire branch. This one clears its table at `LABEL L3`, and the
+    write-once rule can't help either, since `pick.x` has three definitions.
+
+    The condition has to be genuinely unknowable for the limitation to be
+    visible at all: written as `if (1 > 0)` instead, the condition folds,
+    the else-arm becomes unreachable, exactly one store survives — and the
+    write-once rule then *does* reduce the whole function body to
+    `(RETURN, 5, -, -)`. That contrast is the clearest statement of where
+    the boundary actually sits: this optimizer reasons well along a single
+    path and not at all across a merge.
   - **Only `int`-typed operands get the additive identities.** `x + 0`,
     `x - 0` and `x % 1` are skipped unless the operand has an `int` entry in
     `var_types`, which a temporary never does — so `+n - 0` simplifies the
