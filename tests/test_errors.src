@@ -1,0 +1,5 @@
+var int x = 32432bace;
+var string msg = "hello world;
+var char c = '';
+var float f = 3.14;
+x = x + @;

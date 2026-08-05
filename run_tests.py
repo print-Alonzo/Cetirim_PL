@@ -4,10 +4,15 @@ interpreter pipeline.
     python run_tests.py            run every check, report pass/fail
     python run_tests.py --update   regenerate the golden files from current output
 
-Positive fixtures (prog1..prog5): each program's scanner token stream,
-compiled quadruple listing, and executed output are diffed against the
-committed goldens (progN_tokens.txt, progN_ir.txt, progN_expected.txt).
-Programs that call input() read from progN.in. The token stream's "Scan
+Positive fixtures (samples/prog1..prog5, plus the checks/check1..check5
+checklist-coverage set): each program's scanner token stream, compiled
+quadruple listing, and
+executed output are diffed against the committed goldens (<name>_tokens.txt,
+<name>_ir.txt, <name>_expected.txt). Programs that call input() read from
+<name>.in. Diffing all three per program is what pins the rubric's three
+grading columns at once - the token stream covers the scanner, the quad
+listing covers the parser and semantic analyser, and the output covers the
+interpreter. The token stream's "Scan
 time" line is a live per-run timing measurement, not scanner output, so
 it's stripped from both sides before comparing (but --update still writes
 whatever timing that regeneration run happened to see, same as the
@@ -18,7 +23,22 @@ specific phase; the runner only checks that the right "[... ERROR]" tag
 appears and that the process exits with the declared code (2 for
 lex/syntax/semantic/IR errors, 3 for runtime errors) - it does not pin exact
 wording, so error-message copy can still be improved without breaking the
-suite.
+suite. A fixture may demand the tag more than once (an optional fourth
+tuple element, min_count): sem_multi_errors.src requires five and
+syn_multi_errors.src requires two, which is what actually pins error
+*recovery* in the analyser and the parser - a phase that stopped at the
+first diagnostic would still print the tag once and exit 2.
+
+The scanner recovery check (check_scanner_recovery) is the third phase's
+half of that same row, and needs a different mechanism: a lexical error
+does not stop the scanner, so there is no exit code or tag count that
+distinguishes recovering from halting. What distinguishes them is the token
+stream itself, so tests/test_errors.src - four different lexical errors,
+with valid tokens between and after them - has its whole scanner report
+diffed against tests/test_errors_tokens.txt. A scanner that gave up at the
+first bad
+character would produce a visibly shorter stream. Note that scanner.py's
+CLI exits 2 when it recorded any error, so this check expects 2, not 0.
 
 Feature fixtures (FEATURE_FIXTURES, tests/<name>.src + tests/<name>_expected.txt):
 programs that exercise a specific language feature outside the five graded
@@ -46,11 +66,20 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 
 PROGRAMS = [
-    "prog1_calculator",
-    "prog2_loops_arrays",
-    "prog3_functions",
-    "prog4_structs_match_exceptions",
-    "prog5_advanced",
+    "samples/prog1_calculator",
+    "samples/prog2_loops_arrays",
+    "samples/prog3_functions",
+    "samples/prog4_structs_match_exceptions",
+    "samples/prog5_advanced",
+    # The checklist-coverage set: one program per group of rows in the
+    # course rubric (docs/CSC617M_Machine_Problem_Checklist_Rubric.pdf), so
+    # every graded construct has a program that demonstrates it running.
+    # See docs/CHECKLIST_COVERAGE.md for the row-by-row map.
+    "checks/check1_declarations",
+    "checks/check2_expressions",
+    "checks/check3_control_flow",
+    "checks/check4_functions",
+    "checks/check5_io_heap",
 ]
 
 NEGATIVE_FIXTURES = [
@@ -71,7 +100,28 @@ NEGATIVE_FIXTURES = [
     ("tests/infinite_recursion.src", "[RUNTIME ERROR]", 3),
     ("tests/recursive_struct_error.src", "[SEMANTIC ERROR]", 2),
     ("tests/dynamic_inner_dim_error.src", "[SEMANTIC ERROR]", 2),
+    ("tests/unequal_dims_oob.src", "[RUNTIME ERROR]", 3),
+    # The five semantic errors the course rubric names explicitly, one
+    # fixture each, plus a file combining them to show the analyser
+    # reports every error in a run rather than stopping at the first -
+    # its min_count of 5 is what makes that recovery claim an assertion.
+    ("tests/sem_undeclared_var.src", "[SEMANTIC ERROR]", 2),
+    ("tests/sem_type_mismatch.src", "[SEMANTIC ERROR]", 2),
+    ("tests/sem_redeclared_var.src", "[SEMANTIC ERROR]", 2),
+    ("tests/sem_const_reassign.src", "[SEMANTIC ERROR]", 2),
+    ("tests/sem_arg_cardinality.src", "[SEMANTIC ERROR]", 2),
+    ("tests/sem_multi_errors.src", "[SEMANTIC ERROR]", 2, 5),
+    # The parser-side counterpart: two separate missing semicolons, in two
+    # different functions, both of which must be reported. min_count is 2
+    # rather than the exact diagnostic count so the assertion pins recovery
+    # without pinning how a future cascade happens to spell it.
+    ("tests/syn_multi_errors.src", "[SYNTAX ERROR]", 2, 2),
 ]
+
+# The scanner's recovery fixture. Unlike the fixtures above it is checked by
+# diffing its whole token stream (see check_scanner_recovery), since a
+# scanner that halted at the first error would still emit the tag and exit 2.
+SCANNER_RECOVERY = "tests/test_errors"
 
 FEATURE_FIXTURES = [
     "struct_array_init",
@@ -82,6 +132,7 @@ FEATURE_FIXTURES = [
     "negative_mod",
     "string_comparison",
     "nested_array",
+    "unequal_dims",
     "struct_array",
     "nested_struct",
     "struct_return",
@@ -186,11 +237,52 @@ def check_positive(name, update):
     return ok
 
 
-def check_negative(path, tag, exit_code=2):
+def check_scanner_recovery(update):
+    """Diff the scanner's own report for a file full of lexical errors.
+
+    This is the scanner's half of the checklist's "Error Recovery" row. The
+    other two phases can assert recovery by counting diagnostics, but a
+    lexical error never stops the scan, so counting proves nothing here: a
+    scanner that emitted one error and stopped would still report an error
+    and exit 2. What actually distinguishes recovery is that valid tokens
+    keep coming *after* each bad one, so the whole report is diffed -
+    test_errors.src's four errors sit between otherwise valid declarations,
+    and the golden records the full 30-token stream that survives them.
+
+    Uses `_strip_scan_time` for the same reason check_positive does, and
+    expects exit 2, which is what scanner.py's CLI returns once it has
+    recorded any lexical error."""
+    src = f"{SCANNER_RECOVERY}.src"
+    golden = ROOT / f"{SCANNER_RECOVERY}_tokens.txt"
+    result = run("scanner.py", src)
+    actual = result.stdout
+
+    if update:
+        golden.write_text(actual)
+        print(f"[UPDATED] {SCANNER_RECOVERY}")
+        return True
+
+    ok = True
+    expected = golden.read_text() if golden.exists() else ""
+    if _strip_scan_time(actual) != _strip_scan_time(expected):
+        print(f"[FAIL] {SCANNER_RECOVERY}: scanner token stream mismatch")
+        _print_diff(_strip_scan_time(expected), _strip_scan_time(actual))
+        ok = False
+    if result.returncode != 2:
+        print(f"[FAIL] {SCANNER_RECOVERY}: exited {result.returncode}, expected 2")
+        ok = False
+
+    if ok:
+        print(f"[PASS] {SCANNER_RECOVERY} (scanner error recovery)")
+    return ok
+
+
+def check_negative(path, tag, exit_code=2, min_count=1):
     result = run("interpreter.py", str(ROOT / path))
     combined = result.stdout + result.stderr
-    ok = tag in combined and result.returncode == exit_code
-    print(f"[{'PASS' if ok else 'FAIL'}] {path}: expected {tag!r} and exit {exit_code}, got exit {result.returncode}")
+    found = combined.count(tag)
+    ok = found >= min_count and result.returncode == exit_code
+    print(f"[{'PASS' if ok else 'FAIL'}] {path}: expected {tag!r} x{min_count} and exit {exit_code}, got x{found} and exit {result.returncode}")
     if not ok:
         print(combined)
     return ok
@@ -313,12 +405,13 @@ def main():
 
     results = [check_positive(name, args.update) for name in PROGRAMS]
     results += [check_feature(name, args.update) for name in FEATURE_FIXTURES]
+    results.append(check_scanner_recovery(args.update))
     results.append(check_optimizer_report(args.update))
     if args.update:
         print("Golden files updated.")
         return
 
-    results += [check_negative(path, tag, exit_code) for path, tag, exit_code in NEGATIVE_FIXTURES]
+    results += [check_negative(*fixture) for fixture in NEGATIVE_FIXTURES]
 
     for name in PROGRAMS:
         in_file = ROOT / f"{name}.in"
@@ -332,7 +425,7 @@ def main():
         ))
     results += [
         check_negative_optimized(path, tag, exit_code)
-        for path, tag, exit_code in NEGATIVE_FIXTURES if exit_code == 3
+        for path, tag, exit_code, *_ in NEGATIVE_FIXTURES if exit_code == 3
     ]
 
     passed, total = sum(results), len(results)

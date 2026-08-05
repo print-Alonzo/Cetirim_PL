@@ -1,0 +1,9 @@
+// Negative fixture: checklist semantic error 3 - multiply-defined variable.
+// `total` is declared twice in the same scope. Shadowing the name in a
+// *nested* scope would be legal; redeclaring it in the same one is not.
+void main() {
+    var int total;
+    var string total;
+
+    print(total);
+}

@@ -1,0 +1,43 @@
+---- output ----
+a plain string
+mixed argument types: 42 3.5 Z true and text
+no arguments at all produces an empty line:
+
+escapes: tab[	] newline[
+] quote["] backslash[\]
+interpolated: 6 * 7 = 42, and a literal brace is {this}
+an array prints as: {1, 2, 3, 4}
+
+---- input ----
+Enter two integers:
+read two ints: 42 and 7 -> sum 49 product 294
+Enter a float:
+read float: 3.75 -> doubled 7.5
+Enter a name, a letter grade, and true/false:
+read string: Alonzo  char: A  bool: true
+summary: Alonzo scored 3.75 (A), active = true
+
+---- allocation and reference semantics ----
+before any call:  scalar = 1  nums = {1, 2, 3, 4}  pt = ( 1 , 2 )
+after the calls:  scalar = 1  nums = {1001, 1002, 1003, 1004}  pt = ( 1001 , 1002 )
+  the scalar is unchanged - the callee got a copy
+  the array and struct changed - the callee got the same object
+  scalar updated through a return value: 1001
+
+---- aliasing ----
+after `alias = pt; alias.x = -1;`  pt.x = -1  alias.x = -1
+  one record, two names
+after `also_shared = shared; also_shared[0] = -1;`
+  shared = {-1, 8, 9}  also_shared = {-1, 8, 9}
+  one array, two names
+
+---- one allocation per slot ----
+  roster[ 0 ] = node0 10
+  roster[ 1 ] = node1 999
+  roster[ 2 ] = node2 30
+  only slot 1 moved, so the three records are separate objects
+  first  = first 1
+  second = second 42
+  the two returned records are independent allocations
+  after `first = second;` both names denote: second 42
+  the record that `first` used to hold is now unreachable

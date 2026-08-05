@@ -1,0 +1,10 @@
+// Negative fixture: checklist semantic error 2 - type mismatch.
+// A string cannot be assigned to an int, and there is no cast syntax to
+// force it. (The reverse narrowing, float -> int, is rejected too; the
+// only implicit conversions in the language are char -> int -> float.)
+void main() {
+    var int count;
+
+    count = "twenty";
+    print(count);
+}

@@ -1,0 +1,48 @@
+---- calling functions ----
+square(7)              = 49
+sum_array(data, 6)     = 30
+average_of(sum, 6)     = 5.0
+square(square(3))      = 81
+interpolated: square(5) is 25
+square(4) + square(3)  = 25
+make_point(3, 4)       = ( 3 , 4 )
+divmod(17, 5)          = 3 remainder 2
+divmod(100, 7)         = 14 remainder 2
+divmod(45, 6) quotient = 7
+min_mid_max(42, 8, 17) = 8 17 42
+---- argument forms ----
+Hello, Alonzo! You have 4 message(s).
+Hello, World! You have 1 message(s).
+Hello, Reordered! You have 2 message(s).
+Hello, Default! You have 0 message(s).
+---- recursion ----
+factorial(0) = 1
+factorial(1) = 1
+factorial(2) = 2
+factorial(3) = 6
+factorial(4) = 24
+factorial(5) = 120
+factorial(6) = 720
+fib(0..10):
+   fib( 0 ) = 0
+   fib( 1 ) = 1
+   fib( 2 ) = 1
+   fib( 3 ) = 2
+   fib( 4 ) = 3
+   fib( 5 ) = 5
+   fib( 6 ) = 8
+   fib( 7 ) = 13
+   fib( 8 ) = 21
+   fib( 9 ) = 34
+   fib( 10 ) = 55
+gcd(1071, 462)         = 21
+gcd(17, 5)             = 1
+sum_from(data, 6, 0)   = 30 (same total, computed recursively)
+mutual recursion, is_even_r / is_odd_r:
+   0 even? true  odd? false
+   1 even? false  odd? true
+   2 even? true  odd? false
+   3 even? false  odd? true
+   4 even? true  odd? false
+   5 even? false  odd? true
+factorial(i) = 120 and i is still 5

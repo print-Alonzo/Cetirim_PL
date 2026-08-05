@@ -43,30 +43,18 @@ The language supports typed variable/constant declarations, control flow (if-els
 ├── README.md                                   # This file: how to USE the interpreter
 ├── LANGUAGE.md                                 # Programmer's manual: how to WRITE programs in the language
 ├── LIMITATIONS.md                              # Design decisions, known edge cases, scope limits
-├── docs/                                       # Course handouts (MP Specs.pdf, Code_Optimization_Techniques.md)
-├── tests/                                      # 13 feature fixtures (+ golden output) and 17 negative fixtures
-├── prog1_calculator.src                        # Sample program 1
-├── prog1_calculator_tokens.txt                 # Scanner output for prog1
-├── prog1_calculator.in                         # stdin fixture for prog1's input() calls
-├── prog1_calculator_ir.txt                     # Committed quadruple dump for prog1
-├── prog1_calculator_expected.txt               # Golden program output for prog1
-├── prog2_loops_arrays.src                      # Sample program 2
-├── prog2_loops_arrays_tokens.txt               # Scanner output for prog2
-├── prog2_loops_arrays.in                       # stdin fixture for prog2's input() calls
-├── prog2_loops_arrays_ir.txt                   # Committed quadruple dump for prog2
-├── prog2_loops_arrays_expected.txt             # Golden program output for prog2
-├── prog3_functions.src                         # Sample program 3
-├── prog3_functions_tokens.txt                  # Scanner output for prog3
-├── prog3_functions_ir.txt                      # Committed quadruple dump for prog3
-├── prog3_functions_expected.txt                # Golden program output for prog3
-├── prog4_structs_match_exceptions.src          # Sample program 4
-├── prog4_structs_match_exceptions_tokens.txt   # Scanner output for prog4
-├── prog4_structs_match_exceptions_ir.txt       # Committed quadruple dump for prog4
-├── prog4_structs_match_exceptions_expected.txt # Golden program output for prog4
-├── prog5_advanced.src                          # Sample program 5
-├── prog5_advanced_tokens.txt                   # Scanner output for prog5
-├── prog5_advanced_ir.txt                       # Committed quadruple dump for prog5
-└── prog5_advanced_expected.txt                 # Golden program output for prog5
+├── docs/                                       # Course handouts + CHECKLIST_COVERAGE.md (rubric row-by-row map)
+├── samples/                                    # The five graded sample programs, each with its committed goldens:
+│   ├── prog1_calculator.src                    #   the program itself
+│   ├── prog1_calculator.in                     #   stdin fixture for its input() calls (prog1, prog2 only)
+│   ├── prog1_calculator_tokens.txt             #   golden scanner token stream
+│   ├── prog1_calculator_ir.txt                 #   golden quadruple dump
+│   ├── prog1_calculator_expected.txt           #   golden program output
+│   └── ...                                     #   prog2_loops_arrays … prog5_advanced, same pattern
+├── checks/                                     # Rubric checklist-coverage programs, same .src/.in/goldens pattern:
+│   └── ...                                     #   check1_declarations … check5_io_heap
+└── tests/                                      # 14 feature fixtures (+ golden output), 25 negative fixtures,
+                                                #   and the scanner-recovery fixture (test_errors.src + its golden)
 ```
 
 ---
@@ -94,8 +82,8 @@ python scanner.py <source_file> --no-src
 ### Example
 
 ```bash
-python scanner.py prog1_calculator.src
-python scanner.py prog3_functions.src -o out.txt
+python scanner.py samples/prog1_calculator.src
+python scanner.py samples/prog3_functions.src -o out.txt
 ```
 
 ---
@@ -116,8 +104,8 @@ python parser.py <source_file> --ast
 ### Example
 
 ```bash
-python parser.py prog1_calculator.src
-python parser.py prog4_structs_match_exceptions.src --ast
+python parser.py samples/prog1_calculator.src
+python parser.py samples/prog4_structs_match_exceptions.src --ast
 ```
 
 ---
@@ -195,8 +183,8 @@ python interpreter.py <source_file> --max-steps <N> --max-depth <N>
 ### Example
 
 ```bash
-python interpreter.py prog1_calculator.src < prog1_calculator.in
-python interpreter.py prog3_functions.src
+python interpreter.py samples/prog1_calculator.src < samples/prog1_calculator.in
+python interpreter.py samples/prog3_functions.src
 ```
 
 If scanning, parsing, or semantic analysis reports any errors, the
@@ -611,10 +599,35 @@ uncaught `throw`n exceptions.
 | `prog4_structs_match_exceptions.src` | `struct`, `typedef`, `match` statement, `match` expression, `guard`, `try`/`catch`/`finally`, `throw`, `char`/`bool` literals, escape sequences |
 | `prog5_advanced.src` | Multi-assignment, `let` destructuring, complex expressions, nested loops |
 
-`prog1` and `prog2` call `input()`, so running them non-interactively needs a
-stdin fixture: `python interpreter.py prog1_calculator.src <
-prog1_calculator.in`. `prog3`–`prog5` don't read input and can be run
-directly.
+All five live in `samples/`. `prog1` and `prog2` call `input()`, so running
+them non-interactively needs a stdin fixture: `python interpreter.py
+samples/prog1_calculator.src < samples/prog1_calculator.in`. `prog3`–`prog5`
+don't read input and can be run directly.
+
+### Checklist-coverage set
+
+A second set of programs is organized against the course grading checklist
+(`docs/CSC617M_Machine_Problem_Checklist_Rubric.pdf`), one program per group of
+rows, so no graded construct has to be spotted inside a larger program:
+
+| File | Checklist rows |
+|---|---|
+| `check1_declarations.src` | Headers/Comments, Variable Declaration, Arrays, Structures/Records, Constant Declaration, Assignment |
+| `check2_expressions.src` | Math Expr (simple, complex), Boolean Expr (simple, complex, complex logical) — laid out as the rubric's own `(a)`–`(e)` expression hierarchy |
+| `check3_control_flow.src` | If Stmt, Loops (`while`, all three `for` forms, `repeat-until`), Nested Statements |
+| `check4_functions.src` | Functions: Declare, Call, Recursion (direct, tree, mutual) |
+| `check5_io_heap.src` | Input Stmt, Output Stmt, Heap Simulation (reference vs. value semantics) |
+
+All five live in `checks/`. `check5` reads input, so run it as `python
+interpreter.py checks/check5_io_heap.src < checks/check5_io_heap.in`. All
+five are registered as positive fixtures in
+`run_tests.py`, so their token stream, IR, and output are all diffed against
+committed goldens.
+
+**[`docs/CHECKLIST_COVERAGE.md`](docs/CHECKLIST_COVERAGE.md)** maps every
+checklist row to the program that demonstrates it, including the five named
+semantic errors and an honest note on the two rows the language does not
+implement.
 
 ---
 

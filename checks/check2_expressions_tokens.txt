@@ -1,0 +1,1227 @@
+
+========================================================================
+  SOURCE:  check2_expressions.src
+========================================================================
+
+     1 | // check2_expressions.src
+     2 | // Checklist rows: Math Expr (Simple, Complex), Boolean Expr (Simple,
+     3 | //                 Complex/Simple Logical, Multiple/Complex Logical),
+     4 | //                 and section 5 "Flexibility and Robustness of Expressions".
+     5 | //
+     6 | // The five tiers below are labelled (a)..(e) to match the rubric's own
+     7 | // expression hierarchy, in its order. Every result is printed, so the
+     8 | // interpreter column is checked by the golden output and not just the
+     9 | // parser's willingness to accept the syntax.
+    10 | 
+    11 | const int BASE = 34;
+    12 | const int SCALE = 234;
+    13 | 
+    14 | struct Point {
+    15 |     int x, y;
+    16 | };
+    17 | 
+    18 | // Operands for the complex tiers: a call, an array element, and a struct
+    19 | // field all have to be usable inside one arithmetic expression.
+    20 | int func1(int a, int b, int c) {
+    21 |     return a + b * c;
+    22 | }
+    23 | 
+    24 | int weight(int n) {
+    25 |     return n * 2 + 1;
+    26 | }
+    27 | 
+    28 | // Prints when it runs, so a short-circuited call is visible by its silence.
+    29 | bool noisy(bool v) {
+    30 |     print("      [noisy() actually ran]");
+    31 |     return v;
+    32 | }
+    33 | 
+    34 | void main() {
+    35 |     var int x, y, z32;
+    36 |     var int sm1, sm2, sm3, sm4, sm5;
+    37 |     var float sf1;
+    38 |     var int cm1, cm2, cm3;
+    39 |     var float cf1, cf2;
+    40 |     var bool sb1, sb2, sb3, sb4, sb5, sb6, sb7, sb8;
+    41 |     var bool cb1, cb2, cb3;
+    42 |     var bool cl1, cl2, cl3;
+    43 |     val int arr[5] = {10, 20, 30, 40, 50};
+    44 |     var struct Point pt;
+    45 | 
+    46 |     x = 10;
+    47 |     y = 20;
+    48 |     z32 = 30;
+    49 |     pt.x = 3;
+    50 |     pt.y = 4;
+    51 | 
+    52 |     print("operands:  x =", x, " y =", y, " z32 =", z32);
+    53 |     print("           arr =", arr, " pt = (", pt.x, ",", pt.y, ")");
+    54 |     print("           BASE =", BASE, " SCALE =", SCALE);
+    55 |     print("");
+    56 | 
+    57 |     // =================================================================
+    58 |     // (a) simple_math  --  x = id + num;  x = id * id;  x = num / num;
+    59 |     // =================================================================
+    60 |     print("---- (a) simple math ----");
+    61 | 
+    62 |     sm1 = z32 + 7;          // id + num
+    63 |     sm2 = z32 * y;          // id * id
+    64 |     sf1 = 9.0 / 2.0;        // num / num
+    65 |     sm3 = z32 - 3;          // id - num
+    66 |     sm4 = 17 % 5;           // num % num
+    67 |     sm5 = 7 / 2;            // integer division truncates toward zero
+    68 | 
+    69 |     print("z32 + 7   =", sm1);
+    70 |     print("z32 * y   =", sm2);
+    71 |     print("9.0 / 2.0 =", sf1);
+    72 |     print("z32 - 3   =", sm3);
+    73 |     print("17 % 5    =", sm4);
+    74 |     print("7 / 2     =", sm5, "(int division truncates; use 7 / 2.0 for 3.5)");
+    75 |     print("unary minus and plus:", -x, +x);
+    76 |     print("");
+    77 | 
+    78 |     // =================================================================
+    79 |     // (b) complex_math -- nested simple_math, and simple math combined
+    80 |     //     with function calls, array elements and struct fields.
+    81 |     // =================================================================
+    82 |     print("---- (b) complex math ----");
+    83 | 
+    84 |     // The rubric's own example shape: call + literal arithmetic + id.
+    85 |     cm1 = func1(23, 4, 5) + BASE / SCALE * z32;
+    86 |     print("func1(23,4,5) + BASE / SCALE * z32 =", cm1);
+    87 |     print("   func1(23,4,5) =", func1(23, 4, 5),
+    88 |           "and BASE / SCALE =", BASE / SCALE, "(integer division -> 0)");
+    89 | 
+    90 |     // Call, array element and struct field all inside one expression.
+    91 |     cm2 = func1(2, 3, 4) + arr[2] * pt.x - weight(arr[0]) / 2;
+    92 |     print("func1(2,3,4) + arr[2] * pt.x - weight(arr[0]) / 2 =", cm2);
+    93 | 
+    94 |     // Nested simple_math: parenthesised sub-expressions feeding each other.
+    95 |     cm3 = ((sm1 + sm3) * 2 - arr[1]) / (pt.y + 1);
+    96 |     print("((sm1 + sm3) * 2 - arr[1]) / (pt.y + 1) =", cm3);
+    97 | 
+    98 |     // Mixed int/float arithmetic, with the int operands promoted.
+    99 |     cf1 = (x + y) * 1.0 / (z32 - 5) + 3.0;
+   100 |     print("(x + y) * 1.0 / (z32 - 5) + 3.0 =", cf1);
+   101 | 
+   102 |     cf2 = BASE / 8.0 * 2.0;
+   103 |     print("BASE / 8.0 * 2.0 =", cf2, "(a float operand keeps the fraction)");
+   104 | 
+   105 |     // A call whose own arguments are complex_math expressions.
+   106 |     print("func1(arr[1] / 4, pt.y, weight(pt.x)) =",
+   107 |           func1(arr[1] / 4, pt.y, weight(pt.x)));
+   108 |     print("");
+   109 | 
+   110 |     // =================================================================
+   111 |     // (c) simple boolean -- ( simple_math rel_op simple_math ), every
+   112 |     //     relational operator, plus unary !.
+   113 |     // =================================================================
+   114 |     print("---- (c) simple boolean ----");
+   115 | 
+   116 |     sb1 = z32 < 100;
+   117 |     sb2 = z32 > 5;
+   118 |     sb3 = z32 <= 30;
+   119 |     sb4 = z32 >= 31;
+   120 |     sb5 = z32 == 30;
+   121 |     sb6 = z32 != 31;
+   122 |     sb7 = !(z32 == 31);
+   123 |     // ( complex_math rel_op complex_math )
+   124 |     sb8 = (func1(1, 2, 3) + arr[1] * 2) > (weight(pt.x) - BASE / 4);
+   125 | 
+   126 |     print("z32 < 100   =", sb1);
+   127 |     print("z32 > 5     =", sb2);
+   128 |     print("z32 <= 30   =", sb3);
+   129 |     print("z32 >= 31   =", sb4);
+   130 |     print("z32 == 30   =", sb5);
+   131 |     print("z32 != 31   =", sb6);
+   132 |     print("!(z32 == 31) =", sb7);
+   133 |     print("(func1(1,2,3) + arr[1] * 2) > (weight(pt.x) - BASE / 4) =", sb8);
+   134 |     print("");
+   135 | 
+   136 |     // =================================================================
+   137 |     // (d) complex_boolean -- ( simple_boolean logical_op simple_boolean )
+   138 |     // =================================================================
+   139 |     print("---- (d) complex boolean ----");
+   140 | 
+   141 |     cb1 = (x > 5) && (y < 100);
+   142 |     cb2 = (x > 5) || (y < 0);
+   143 |     cb3 = (x >= 10) && (y == 20) && (z32 != 0);
+   144 | 
+   145 |     print("(x > 5) && (y < 100)               =", cb1);
+   146 |     print("(x > 5) || (y < 0)                 =", cb2);
+   147 |     print("(x >= 10) && (y == 20) && (z32 != 0) =", cb3);
+   148 |     print("");
+   149 | 
+   150 |     // =================================================================
+   151 |     // (e) Complex_Logical -- nested complex_boolean, mixing complex_math
+   152 |     //     operands, several logical operators and a negated group.
+   153 |     // =================================================================
+   154 |     print("---- (e) complex logical ----");
+   155 | 
+   156 |     cl1 = ((func1(1, 2, 3) + arr[0] > pt.x * 2) && !(y % 3 == 0))
+   157 |           || (z32 <= 30 && !(x > 1000));
+   158 |     print("((func1(1,2,3) + arr[0] > pt.x * 2) && !(y % 3 == 0))"
+   159 |           , "|| (z32 <= 30 && !(x > 1000)) =", cl1);
+   160 | 
+   161 |     cl2 = (arr[4] - 50 > 0 && !(pt.y >= 4)) || (!(z32 == 30) && sm4 != 2);
+   162 |     print("(arr[4] - 50 > 0 && !(pt.y >= 4)) || (!(z32 == 30) && sm4 != 2) =", cl2);
+   163 | 
+   164 |     cl3 = !((x + y < z32) || (weight(pt.y) % 2 == 0)) && (arr[3] / 4 == 10);
+   165 |     print("!((x + y < z32) || (weight(pt.y) % 2 == 0)) && (arr[3] / 4 == 10) =", cl3);
+   166 |     print("");
+   167 | 
+   168 |     // ---- && and || short-circuit: the right operand is not evaluated
+   169 |     //      when the left already decides the answer. ----
+   170 |     print("---- short-circuit evaluation ----");
+   171 |     print("false && noisy(true):");
+   172 |     cb1 = false && noisy(true);
+   173 |     print("   result", cb1, "- noisy() stayed silent, so it never ran");
+   174 |     print("true || noisy(true):");
+   175 |     cb2 = true || noisy(true);
+   176 |     print("   result", cb2, "- again skipped");
+   177 |     print("true && noisy(false):");
+   178 |     cb3 = true && noisy(false);
+   179 |     print("   result", cb3, "- here the right operand had to be evaluated");
+   180 | }
+
+========================================================================
+  LEXICAL ERRORS  (0 found)
+========================================================================
+
+  None.
+
+========================================================================
+  TOKEN STREAM  (996 tokens)
+========================================================================
+
+      #  TYPE              LEXEME                             LINE    COL  ATTR
+  --------------------------------------------------------------------------------
+      1  KEYWORD           'const'                              11      1  
+      2  KEYWORD           'int'                                11      7  
+      3  IDENTIFIER        'BASE'                               11     11  
+      4  ASSIGN_OP         '='                                  11     16  
+      5  INTEGER_LIT       '34'                                 11     18  34
+      6  SEMICOLON         ';'                                  11     20  
+      7  KEYWORD           'const'                              12      1  
+      8  KEYWORD           'int'                                12      7  
+      9  IDENTIFIER        'SCALE'                              12     11  
+     10  ASSIGN_OP         '='                                  12     17  
+     11  INTEGER_LIT       '234'                                12     19  234
+     12  SEMICOLON         ';'                                  12     22  
+     13  KEYWORD           'struct'                             14      1  
+     14  IDENTIFIER        'Point'                              14      8  
+     15  LBRACE            '{'                                  14     14  
+     16  KEYWORD           'int'                                15      5  
+     17  IDENTIFIER        'x'                                  15      9  
+     18  COMMA             ','                                  15     10  
+     19  IDENTIFIER        'y'                                  15     12  
+     20  SEMICOLON         ';'                                  15     13  
+     21  RBRACE            '}'                                  16      1  
+     22  SEMICOLON         ';'                                  16      2  
+     23  KEYWORD           'int'                                20      1  
+     24  IDENTIFIER        'func1'                              20      5  
+     25  LPAREN            '('                                  20     10  
+     26  KEYWORD           'int'                                20     11  
+     27  IDENTIFIER        'a'                                  20     15  
+     28  COMMA             ','                                  20     16  
+     29  KEYWORD           'int'                                20     18  
+     30  IDENTIFIER        'b'                                  20     22  
+     31  COMMA             ','                                  20     23  
+     32  KEYWORD           'int'                                20     25  
+     33  IDENTIFIER        'c'                                  20     29  
+     34  RPAREN            ')'                                  20     30  
+     35  LBRACE            '{'                                  20     32  
+     36  KEYWORD           'return'                             21      5  
+     37  IDENTIFIER        'a'                                  21     12  
+     38  ARITH_OP          '+'                                  21     14  
+     39  IDENTIFIER        'b'                                  21     16  
+     40  ARITH_OP          '*'                                  21     18  
+     41  IDENTIFIER        'c'                                  21     20  
+     42  SEMICOLON         ';'                                  21     21  
+     43  RBRACE            '}'                                  22      1  
+     44  KEYWORD           'int'                                24      1  
+     45  IDENTIFIER        'weight'                             24      5  
+     46  LPAREN            '('                                  24     11  
+     47  KEYWORD           'int'                                24     12  
+     48  IDENTIFIER        'n'                                  24     16  
+     49  RPAREN            ')'                                  24     17  
+     50  LBRACE            '{'                                  24     19  
+     51  KEYWORD           'return'                             25      5  
+     52  IDENTIFIER        'n'                                  25     12  
+     53  ARITH_OP          '*'                                  25     14  
+     54  INTEGER_LIT       '2'                                  25     16  2
+     55  ARITH_OP          '+'                                  25     18  
+     56  INTEGER_LIT       '1'                                  25     20  1
+     57  SEMICOLON         ';'                                  25     21  
+     58  RBRACE            '}'                                  26      1  
+     59  KEYWORD           'bool'                               29      1  
+     60  IDENTIFIER        'noisy'                              29      6  
+     61  LPAREN            '('                                  29     11  
+     62  KEYWORD           'bool'                               29     12  
+     63  IDENTIFIER        'v'                                  29     17  
+     64  RPAREN            ')'                                  29     18  
+     65  LBRACE            '{'                                  29     20  
+     66  KEYWORD           'print'                              30      5  
+     67  LPAREN            '('                                  30     10  
+     68  STRING_LIT        '"      [noisy() actually ran]"'     30     11  '      [noisy() actually ran]'
+     69  RPAREN            ')'                                  30     41  
+     70  SEMICOLON         ';'                                  30     42  
+     71  KEYWORD           'return'                             31      5  
+     72  IDENTIFIER        'v'                                  31     12  
+     73  SEMICOLON         ';'                                  31     13  
+     74  RBRACE            '}'                                  32      1  
+     75  KEYWORD           'void'                               34      1  
+     76  IDENTIFIER        'main'                               34      6  
+     77  LPAREN            '('                                  34     10  
+     78  RPAREN            ')'                                  34     11  
+     79  LBRACE            '{'                                  34     13  
+     80  KEYWORD           'var'                                35      5  
+     81  KEYWORD           'int'                                35      9  
+     82  IDENTIFIER        'x'                                  35     13  
+     83  COMMA             ','                                  35     14  
+     84  IDENTIFIER        'y'                                  35     16  
+     85  COMMA             ','                                  35     17  
+     86  IDENTIFIER        'z32'                                35     19  
+     87  SEMICOLON         ';'                                  35     22  
+     88  KEYWORD           'var'                                36      5  
+     89  KEYWORD           'int'                                36      9  
+     90  IDENTIFIER        'sm1'                                36     13  
+     91  COMMA             ','                                  36     16  
+     92  IDENTIFIER        'sm2'                                36     18  
+     93  COMMA             ','                                  36     21  
+     94  IDENTIFIER        'sm3'                                36     23  
+     95  COMMA             ','                                  36     26  
+     96  IDENTIFIER        'sm4'                                36     28  
+     97  COMMA             ','                                  36     31  
+     98  IDENTIFIER        'sm5'                                36     33  
+     99  SEMICOLON         ';'                                  36     36  
+    100  KEYWORD           'var'                                37      5  
+    101  KEYWORD           'float'                              37      9  
+    102  IDENTIFIER        'sf1'                                37     15  
+    103  SEMICOLON         ';'                                  37     18  
+    104  KEYWORD           'var'                                38      5  
+    105  KEYWORD           'int'                                38      9  
+    106  IDENTIFIER        'cm1'                                38     13  
+    107  COMMA             ','                                  38     16  
+    108  IDENTIFIER        'cm2'                                38     18  
+    109  COMMA             ','                                  38     21  
+    110  IDENTIFIER        'cm3'                                38     23  
+    111  SEMICOLON         ';'                                  38     26  
+    112  KEYWORD           'var'                                39      5  
+    113  KEYWORD           'float'                              39      9  
+    114  IDENTIFIER        'cf1'                                39     15  
+    115  COMMA             ','                                  39     18  
+    116  IDENTIFIER        'cf2'                                39     20  
+    117  SEMICOLON         ';'                                  39     23  
+    118  KEYWORD           'var'                                40      5  
+    119  KEYWORD           'bool'                               40      9  
+    120  IDENTIFIER        'sb1'                                40     14  
+    121  COMMA             ','                                  40     17  
+    122  IDENTIFIER        'sb2'                                40     19  
+    123  COMMA             ','                                  40     22  
+    124  IDENTIFIER        'sb3'                                40     24  
+    125  COMMA             ','                                  40     27  
+    126  IDENTIFIER        'sb4'                                40     29  
+    127  COMMA             ','                                  40     32  
+    128  IDENTIFIER        'sb5'                                40     34  
+    129  COMMA             ','                                  40     37  
+    130  IDENTIFIER        'sb6'                                40     39  
+    131  COMMA             ','                                  40     42  
+    132  IDENTIFIER        'sb7'                                40     44  
+    133  COMMA             ','                                  40     47  
+    134  IDENTIFIER        'sb8'                                40     49  
+    135  SEMICOLON         ';'                                  40     52  
+    136  KEYWORD           'var'                                41      5  
+    137  KEYWORD           'bool'                               41      9  
+    138  IDENTIFIER        'cb1'                                41     14  
+    139  COMMA             ','                                  41     17  
+    140  IDENTIFIER        'cb2'                                41     19  
+    141  COMMA             ','                                  41     22  
+    142  IDENTIFIER        'cb3'                                41     24  
+    143  SEMICOLON         ';'                                  41     27  
+    144  KEYWORD           'var'                                42      5  
+    145  KEYWORD           'bool'                               42      9  
+    146  IDENTIFIER        'cl1'                                42     14  
+    147  COMMA             ','                                  42     17  
+    148  IDENTIFIER        'cl2'                                42     19  
+    149  COMMA             ','                                  42     22  
+    150  IDENTIFIER        'cl3'                                42     24  
+    151  SEMICOLON         ';'                                  42     27  
+    152  KEYWORD           'val'                                43      5  
+    153  KEYWORD           'int'                                43      9  
+    154  IDENTIFIER        'arr'                                43     13  
+    155  LBRACKET          '['                                  43     16  
+    156  INTEGER_LIT       '5'                                  43     17  5
+    157  RBRACKET          ']'                                  43     18  
+    158  ASSIGN_OP         '='                                  43     20  
+    159  LBRACE            '{'                                  43     22  
+    160  INTEGER_LIT       '10'                                 43     23  10
+    161  COMMA             ','                                  43     25  
+    162  INTEGER_LIT       '20'                                 43     27  20
+    163  COMMA             ','                                  43     29  
+    164  INTEGER_LIT       '30'                                 43     31  30
+    165  COMMA             ','                                  43     33  
+    166  INTEGER_LIT       '40'                                 43     35  40
+    167  COMMA             ','                                  43     37  
+    168  INTEGER_LIT       '50'                                 43     39  50
+    169  RBRACE            '}'                                  43     41  
+    170  SEMICOLON         ';'                                  43     42  
+    171  KEYWORD           'var'                                44      5  
+    172  KEYWORD           'struct'                             44      9  
+    173  IDENTIFIER        'Point'                              44     16  
+    174  IDENTIFIER        'pt'                                 44     22  
+    175  SEMICOLON         ';'                                  44     24  
+    176  IDENTIFIER        'x'                                  46      5  
+    177  ASSIGN_OP         '='                                  46      7  
+    178  INTEGER_LIT       '10'                                 46      9  10
+    179  SEMICOLON         ';'                                  46     11  
+    180  IDENTIFIER        'y'                                  47      5  
+    181  ASSIGN_OP         '='                                  47      7  
+    182  INTEGER_LIT       '20'                                 47      9  20
+    183  SEMICOLON         ';'                                  47     11  
+    184  IDENTIFIER        'z32'                                48      5  
+    185  ASSIGN_OP         '='                                  48      9  
+    186  INTEGER_LIT       '30'                                 48     11  30
+    187  SEMICOLON         ';'                                  48     13  
+    188  IDENTIFIER        'pt'                                 49      5  
+    189  DOT               '.'                                  49      7  
+    190  IDENTIFIER        'x'                                  49      8  
+    191  ASSIGN_OP         '='                                  49     10  
+    192  INTEGER_LIT       '3'                                  49     12  3
+    193  SEMICOLON         ';'                                  49     13  
+    194  IDENTIFIER        'pt'                                 50      5  
+    195  DOT               '.'                                  50      7  
+    196  IDENTIFIER        'y'                                  50      8  
+    197  ASSIGN_OP         '='                                  50     10  
+    198  INTEGER_LIT       '4'                                  50     12  4
+    199  SEMICOLON         ';'                                  50     13  
+    200  KEYWORD           'print'                              52      5  
+    201  LPAREN            '('                                  52     10  
+    202  STRING_LIT        '"operands:  x ="'                   52     11  'operands:  x ='
+    203  COMMA             ','                                  52     27  
+    204  IDENTIFIER        'x'                                  52     29  
+    205  COMMA             ','                                  52     30  
+    206  STRING_LIT        '" y ="'                             52     32  ' y ='
+    207  COMMA             ','                                  52     38  
+    208  IDENTIFIER        'y'                                  52     40  
+    209  COMMA             ','                                  52     41  
+    210  STRING_LIT        '" z32 ="'                           52     43  ' z32 ='
+    211  COMMA             ','                                  52     51  
+    212  IDENTIFIER        'z32'                                52     53  
+    213  RPAREN            ')'                                  52     56  
+    214  SEMICOLON         ';'                                  52     57  
+    215  KEYWORD           'print'                              53      5  
+    216  LPAREN            '('                                  53     10  
+    217  STRING_LIT        '"           arr ="'                 53     11  '           arr ='
+    218  COMMA             ','                                  53     29  
+    219  IDENTIFIER        'arr'                                53     31  
+    220  COMMA             ','                                  53     34  
+    221  STRING_LIT        '" pt = ("'                          53     36  ' pt = ('
+    222  COMMA             ','                                  53     45  
+    223  IDENTIFIER        'pt'                                 53     47  
+    224  DOT               '.'                                  53     49  
+    225  IDENTIFIER        'x'                                  53     50  
+    226  COMMA             ','                                  53     51  
+    227  STRING_LIT        '","'                                53     53  ','
+    228  COMMA             ','                                  53     56  
+    229  IDENTIFIER        'pt'                                 53     58  
+    230  DOT               '.'                                  53     60  
+    231  IDENTIFIER        'y'                                  53     61  
+    232  COMMA             ','                                  53     62  
+    233  STRING_LIT        '")"'                                53     64  ')'
+    234  RPAREN            ')'                                  53     67  
+    235  SEMICOLON         ';'                                  53     68  
+    236  KEYWORD           'print'                              54      5  
+    237  LPAREN            '('                                  54     10  
+    238  STRING_LIT        '"           BASE ="'                54     11  '           BASE ='
+    239  COMMA             ','                                  54     30  
+    240  IDENTIFIER        'BASE'                               54     32  
+    241  COMMA             ','                                  54     36  
+    242  STRING_LIT        '" SCALE ="'                         54     38  ' SCALE ='
+    243  COMMA             ','                                  54     48  
+    244  IDENTIFIER        'SCALE'                              54     50  
+    245  RPAREN            ')'                                  54     55  
+    246  SEMICOLON         ';'                                  54     56  
+    247  KEYWORD           'print'                              55      5  
+    248  LPAREN            '('                                  55     10  
+    249  STRING_LIT        '""'                                 55     11  ''
+    250  RPAREN            ')'                                  55     13  
+    251  SEMICOLON         ';'                                  55     14  
+    252  KEYWORD           'print'                              60      5  
+    253  LPAREN            '('                                  60     10  
+    254  STRING_LIT        '"---- (a) simple math ----"'        60     11  '---- (a) simple math ----'
+    255  RPAREN            ')'                                  60     38  
+    256  SEMICOLON         ';'                                  60     39  
+    257  IDENTIFIER        'sm1'                                62      5  
+    258  ASSIGN_OP         '='                                  62      9  
+    259  IDENTIFIER        'z32'                                62     11  
+    260  ARITH_OP          '+'                                  62     15  
+    261  INTEGER_LIT       '7'                                  62     17  7
+    262  SEMICOLON         ';'                                  62     18  
+    263  IDENTIFIER        'sm2'                                63      5  
+    264  ASSIGN_OP         '='                                  63      9  
+    265  IDENTIFIER        'z32'                                63     11  
+    266  ARITH_OP          '*'                                  63     15  
+    267  IDENTIFIER        'y'                                  63     17  
+    268  SEMICOLON         ';'                                  63     18  
+    269  IDENTIFIER        'sf1'                                64      5  
+    270  ASSIGN_OP         '='                                  64      9  
+    271  FLOAT_LIT         '9.0'                                64     11  9.0
+    272  ARITH_OP          '/'                                  64     15  
+    273  FLOAT_LIT         '2.0'                                64     17  2.0
+    274  SEMICOLON         ';'                                  64     20  
+    275  IDENTIFIER        'sm3'                                65      5  
+    276  ASSIGN_OP         '='                                  65      9  
+    277  IDENTIFIER        'z32'                                65     11  
+    278  ARITH_OP          '-'                                  65     15  
+    279  INTEGER_LIT       '3'                                  65     17  3
+    280  SEMICOLON         ';'                                  65     18  
+    281  IDENTIFIER        'sm4'                                66      5  
+    282  ASSIGN_OP         '='                                  66      9  
+    283  INTEGER_LIT       '17'                                 66     11  17
+    284  ARITH_OP          '%'                                  66     14  
+    285  INTEGER_LIT       '5'                                  66     16  5
+    286  SEMICOLON         ';'                                  66     17  
+    287  IDENTIFIER        'sm5'                                67      5  
+    288  ASSIGN_OP         '='                                  67      9  
+    289  INTEGER_LIT       '7'                                  67     11  7
+    290  ARITH_OP          '/'                                  67     13  
+    291  INTEGER_LIT       '2'                                  67     15  2
+    292  SEMICOLON         ';'                                  67     16  
+    293  KEYWORD           'print'                              69      5  
+    294  LPAREN            '('                                  69     10  
+    295  STRING_LIT        '"z32 + 7   ="'                      69     11  'z32 + 7   ='
+    296  COMMA             ','                                  69     24  
+    297  IDENTIFIER        'sm1'                                69     26  
+    298  RPAREN            ')'                                  69     29  
+    299  SEMICOLON         ';'                                  69     30  
+    300  KEYWORD           'print'                              70      5  
+    301  LPAREN            '('                                  70     10  
+    302  STRING_LIT        '"z32 * y   ="'                      70     11  'z32 * y   ='
+    303  COMMA             ','                                  70     24  
+    304  IDENTIFIER        'sm2'                                70     26  
+    305  RPAREN            ')'                                  70     29  
+    306  SEMICOLON         ';'                                  70     30  
+    307  KEYWORD           'print'                              71      5  
+    308  LPAREN            '('                                  71     10  
+    309  STRING_LIT        '"9.0 / 2.0 ="'                      71     11  '9.0 / 2.0 ='
+    310  COMMA             ','                                  71     24  
+    311  IDENTIFIER        'sf1'                                71     26  
+    312  RPAREN            ')'                                  71     29  
+    313  SEMICOLON         ';'                                  71     30  
+    314  KEYWORD           'print'                              72      5  
+    315  LPAREN            '('                                  72     10  
+    316  STRING_LIT        '"z32 - 3   ="'                      72     11  'z32 - 3   ='
+    317  COMMA             ','                                  72     24  
+    318  IDENTIFIER        'sm3'                                72     26  
+    319  RPAREN            ')'                                  72     29  
+    320  SEMICOLON         ';'                                  72     30  
+    321  KEYWORD           'print'                              73      5  
+    322  LPAREN            '('                                  73     10  
+    323  STRING_LIT        '"17 % 5    ="'                      73     11  '17 % 5    ='
+    324  COMMA             ','                                  73     24  
+    325  IDENTIFIER        'sm4'                                73     26  
+    326  RPAREN            ')'                                  73     29  
+    327  SEMICOLON         ';'                                  73     30  
+    328  KEYWORD           'print'                              74      5  
+    329  LPAREN            '('                                  74     10  
+    330  STRING_LIT        '"7 / 2     ="'                      74     11  '7 / 2     ='
+    331  COMMA             ','                                  74     24  
+    332  IDENTIFIER        'sm5'                                74     26  
+    333  COMMA             ','                                  74     29  
+    334  STRING_LIT        '"(int division truncates; use 7 / 2.0 for 3.5)"'     74     31  '(int division truncates; use 7 / 2.0 for 3.5)'
+    335  RPAREN            ')'                                  74     78  
+    336  SEMICOLON         ';'                                  74     79  
+    337  KEYWORD           'print'                              75      5  
+    338  LPAREN            '('                                  75     10  
+    339  STRING_LIT        '"unary minus and plus:"'            75     11  'unary minus and plus:'
+    340  COMMA             ','                                  75     34  
+    341  ARITH_OP          '-'                                  75     36  
+    342  IDENTIFIER        'x'                                  75     37  
+    343  COMMA             ','                                  75     38  
+    344  ARITH_OP          '+'                                  75     40  
+    345  IDENTIFIER        'x'                                  75     41  
+    346  RPAREN            ')'                                  75     42  
+    347  SEMICOLON         ';'                                  75     43  
+    348  KEYWORD           'print'                              76      5  
+    349  LPAREN            '('                                  76     10  
+    350  STRING_LIT        '""'                                 76     11  ''
+    351  RPAREN            ')'                                  76     13  
+    352  SEMICOLON         ';'                                  76     14  
+    353  KEYWORD           'print'                              82      5  
+    354  LPAREN            '('                                  82     10  
+    355  STRING_LIT        '"---- (b) complex math ----"'       82     11  '---- (b) complex math ----'
+    356  RPAREN            ')'                                  82     39  
+    357  SEMICOLON         ';'                                  82     40  
+    358  IDENTIFIER        'cm1'                                85      5  
+    359  ASSIGN_OP         '='                                  85      9  
+    360  IDENTIFIER        'func1'                              85     11  
+    361  LPAREN            '('                                  85     16  
+    362  INTEGER_LIT       '23'                                 85     17  23
+    363  COMMA             ','                                  85     19  
+    364  INTEGER_LIT       '4'                                  85     21  4
+    365  COMMA             ','                                  85     22  
+    366  INTEGER_LIT       '5'                                  85     24  5
+    367  RPAREN            ')'                                  85     25  
+    368  ARITH_OP          '+'                                  85     27  
+    369  IDENTIFIER        'BASE'                               85     29  
+    370  ARITH_OP          '/'                                  85     34  
+    371  IDENTIFIER        'SCALE'                              85     36  
+    372  ARITH_OP          '*'                                  85     42  
+    373  IDENTIFIER        'z32'                                85     44  
+    374  SEMICOLON         ';'                                  85     47  
+    375  KEYWORD           'print'                              86      5  
+    376  LPAREN            '('                                  86     10  
+    377  STRING_LIT        '"func1(23,4,5) + BASE / SCALE * z32 ="'     86     11  'func1(23,4,5) + BASE / SCALE * z32 ='
+    378  COMMA             ','                                  86     49  
+    379  IDENTIFIER        'cm1'                                86     51  
+    380  RPAREN            ')'                                  86     54  
+    381  SEMICOLON         ';'                                  86     55  
+    382  KEYWORD           'print'                              87      5  
+    383  LPAREN            '('                                  87     10  
+    384  STRING_LIT        '"   func1(23,4,5) ="'               87     11  '   func1(23,4,5) ='
+    385  COMMA             ','                                  87     31  
+    386  IDENTIFIER        'func1'                              87     33  
+    387  LPAREN            '('                                  87     38  
+    388  INTEGER_LIT       '23'                                 87     39  23
+    389  COMMA             ','                                  87     41  
+    390  INTEGER_LIT       '4'                                  87     43  4
+    391  COMMA             ','                                  87     44  
+    392  INTEGER_LIT       '5'                                  87     46  5
+    393  RPAREN            ')'                                  87     47  
+    394  COMMA             ','                                  87     48  
+    395  STRING_LIT        '"and BASE / SCALE ="'               88     11  'and BASE / SCALE ='
+    396  COMMA             ','                                  88     31  
+    397  IDENTIFIER        'BASE'                               88     33  
+    398  ARITH_OP          '/'                                  88     38  
+    399  IDENTIFIER        'SCALE'                              88     40  
+    400  COMMA             ','                                  88     45  
+    401  STRING_LIT        '"(integer division -> 0)"'          88     47  '(integer division -> 0)'
+    402  RPAREN            ')'                                  88     72  
+    403  SEMICOLON         ';'                                  88     73  
+    404  IDENTIFIER        'cm2'                                91      5  
+    405  ASSIGN_OP         '='                                  91      9  
+    406  IDENTIFIER        'func1'                              91     11  
+    407  LPAREN            '('                                  91     16  
+    408  INTEGER_LIT       '2'                                  91     17  2
+    409  COMMA             ','                                  91     18  
+    410  INTEGER_LIT       '3'                                  91     20  3
+    411  COMMA             ','                                  91     21  
+    412  INTEGER_LIT       '4'                                  91     23  4
+    413  RPAREN            ')'                                  91     24  
+    414  ARITH_OP          '+'                                  91     26  
+    415  IDENTIFIER        'arr'                                91     28  
+    416  LBRACKET          '['                                  91     31  
+    417  INTEGER_LIT       '2'                                  91     32  2
+    418  RBRACKET          ']'                                  91     33  
+    419  ARITH_OP          '*'                                  91     35  
+    420  IDENTIFIER        'pt'                                 91     37  
+    421  DOT               '.'                                  91     39  
+    422  IDENTIFIER        'x'                                  91     40  
+    423  ARITH_OP          '-'                                  91     42  
+    424  IDENTIFIER        'weight'                             91     44  
+    425  LPAREN            '('                                  91     50  
+    426  IDENTIFIER        'arr'                                91     51  
+    427  LBRACKET          '['                                  91     54  
+    428  INTEGER_LIT       '0'                                  91     55  0
+    429  RBRACKET          ']'                                  91     56  
+    430  RPAREN            ')'                                  91     57  
+    431  ARITH_OP          '/'                                  91     59  
+    432  INTEGER_LIT       '2'                                  91     61  2
+    433  SEMICOLON         ';'                                  91     62  
+    434  KEYWORD           'print'                              92      5  
+    435  LPAREN            '('                                  92     10  
+    436  STRING_LIT        '"func1(2,3,4) + arr[2] * pt.x - weight(arr[0]) / 2 ="'     92     11  'func1(2,3,4) + arr[2] * pt.x - weight(arr[0]) / 2 ='
+    437  COMMA             ','                                  92     64  
+    438  IDENTIFIER        'cm2'                                92     66  
+    439  RPAREN            ')'                                  92     69  
+    440  SEMICOLON         ';'                                  92     70  
+    441  IDENTIFIER        'cm3'                                95      5  
+    442  ASSIGN_OP         '='                                  95      9  
+    443  LPAREN            '('                                  95     11  
+    444  LPAREN            '('                                  95     12  
+    445  IDENTIFIER        'sm1'                                95     13  
+    446  ARITH_OP          '+'                                  95     17  
+    447  IDENTIFIER        'sm3'                                95     19  
+    448  RPAREN            ')'                                  95     22  
+    449  ARITH_OP          '*'                                  95     24  
+    450  INTEGER_LIT       '2'                                  95     26  2
+    451  ARITH_OP          '-'                                  95     28  
+    452  IDENTIFIER        'arr'                                95     30  
+    453  LBRACKET          '['                                  95     33  
+    454  INTEGER_LIT       '1'                                  95     34  1
+    455  RBRACKET          ']'                                  95     35  
+    456  RPAREN            ')'                                  95     36  
+    457  ARITH_OP          '/'                                  95     38  
+    458  LPAREN            '('                                  95     40  
+    459  IDENTIFIER        'pt'                                 95     41  
+    460  DOT               '.'                                  95     43  
+    461  IDENTIFIER        'y'                                  95     44  
+    462  ARITH_OP          '+'                                  95     46  
+    463  INTEGER_LIT       '1'                                  95     48  1
+    464  RPAREN            ')'                                  95     49  
+    465  SEMICOLON         ';'                                  95     50  
+    466  KEYWORD           'print'                              96      5  
+    467  LPAREN            '('                                  96     10  
+    468  STRING_LIT        '"((sm1 + sm3) * 2 - arr[1]) / (pt.y + 1) ="'     96     11  '((sm1 + sm3) * 2 - arr[1]) / (pt.y + 1) ='
+    469  COMMA             ','                                  96     54  
+    470  IDENTIFIER        'cm3'                                96     56  
+    471  RPAREN            ')'                                  96     59  
+    472  SEMICOLON         ';'                                  96     60  
+    473  IDENTIFIER        'cf1'                                99      5  
+    474  ASSIGN_OP         '='                                  99      9  
+    475  LPAREN            '('                                  99     11  
+    476  IDENTIFIER        'x'                                  99     12  
+    477  ARITH_OP          '+'                                  99     14  
+    478  IDENTIFIER        'y'                                  99     16  
+    479  RPAREN            ')'                                  99     17  
+    480  ARITH_OP          '*'                                  99     19  
+    481  FLOAT_LIT         '1.0'                                99     21  1.0
+    482  ARITH_OP          '/'                                  99     25  
+    483  LPAREN            '('                                  99     27  
+    484  IDENTIFIER        'z32'                                99     28  
+    485  ARITH_OP          '-'                                  99     32  
+    486  INTEGER_LIT       '5'                                  99     34  5
+    487  RPAREN            ')'                                  99     35  
+    488  ARITH_OP          '+'                                  99     37  
+    489  FLOAT_LIT         '3.0'                                99     39  3.0
+    490  SEMICOLON         ';'                                  99     42  
+    491  KEYWORD           'print'                             100      5  
+    492  LPAREN            '('                                 100     10  
+    493  STRING_LIT        '"(x + y) * 1.0 / (z32 - 5) + 3.0 ="'    100     11  '(x + y) * 1.0 / (z32 - 5) + 3.0 ='
+    494  COMMA             ','                                 100     46  
+    495  IDENTIFIER        'cf1'                               100     48  
+    496  RPAREN            ')'                                 100     51  
+    497  SEMICOLON         ';'                                 100     52  
+    498  IDENTIFIER        'cf2'                               102      5  
+    499  ASSIGN_OP         '='                                 102      9  
+    500  IDENTIFIER        'BASE'                              102     11  
+    501  ARITH_OP          '/'                                 102     16  
+    502  FLOAT_LIT         '8.0'                               102     18  8.0
+    503  ARITH_OP          '*'                                 102     22  
+    504  FLOAT_LIT         '2.0'                               102     24  2.0
+    505  SEMICOLON         ';'                                 102     27  
+    506  KEYWORD           'print'                             103      5  
+    507  LPAREN            '('                                 103     10  
+    508  STRING_LIT        '"BASE / 8.0 * 2.0 ="'              103     11  'BASE / 8.0 * 2.0 ='
+    509  COMMA             ','                                 103     31  
+    510  IDENTIFIER        'cf2'                               103     33  
+    511  COMMA             ','                                 103     36  
+    512  STRING_LIT        '"(a float operand keeps the fraction)"'    103     38  '(a float operand keeps the fraction)'
+    513  RPAREN            ')'                                 103     76  
+    514  SEMICOLON         ';'                                 103     77  
+    515  KEYWORD           'print'                             106      5  
+    516  LPAREN            '('                                 106     10  
+    517  STRING_LIT        '"func1(arr[1] / 4, pt.y, weight(pt.x)) ="'    106     11  'func1(arr[1] / 4, pt.y, weight(pt.x)) ='
+    518  COMMA             ','                                 106     52  
+    519  IDENTIFIER        'func1'                             107     11  
+    520  LPAREN            '('                                 107     16  
+    521  IDENTIFIER        'arr'                               107     17  
+    522  LBRACKET          '['                                 107     20  
+    523  INTEGER_LIT       '1'                                 107     21  1
+    524  RBRACKET          ']'                                 107     22  
+    525  ARITH_OP          '/'                                 107     24  
+    526  INTEGER_LIT       '4'                                 107     26  4
+    527  COMMA             ','                                 107     27  
+    528  IDENTIFIER        'pt'                                107     29  
+    529  DOT               '.'                                 107     31  
+    530  IDENTIFIER        'y'                                 107     32  
+    531  COMMA             ','                                 107     33  
+    532  IDENTIFIER        'weight'                            107     35  
+    533  LPAREN            '('                                 107     41  
+    534  IDENTIFIER        'pt'                                107     42  
+    535  DOT               '.'                                 107     44  
+    536  IDENTIFIER        'x'                                 107     45  
+    537  RPAREN            ')'                                 107     46  
+    538  RPAREN            ')'                                 107     47  
+    539  RPAREN            ')'                                 107     48  
+    540  SEMICOLON         ';'                                 107     49  
+    541  KEYWORD           'print'                             108      5  
+    542  LPAREN            '('                                 108     10  
+    543  STRING_LIT        '""'                                108     11  ''
+    544  RPAREN            ')'                                 108     13  
+    545  SEMICOLON         ';'                                 108     14  
+    546  KEYWORD           'print'                             114      5  
+    547  LPAREN            '('                                 114     10  
+    548  STRING_LIT        '"---- (c) simple boolean ----"'    114     11  '---- (c) simple boolean ----'
+    549  RPAREN            ')'                                 114     41  
+    550  SEMICOLON         ';'                                 114     42  
+    551  IDENTIFIER        'sb1'                               116      5  
+    552  ASSIGN_OP         '='                                 116      9  
+    553  IDENTIFIER        'z32'                               116     11  
+    554  REL_OP            '<'                                 116     15  
+    555  INTEGER_LIT       '100'                               116     17  100
+    556  SEMICOLON         ';'                                 116     20  
+    557  IDENTIFIER        'sb2'                               117      5  
+    558  ASSIGN_OP         '='                                 117      9  
+    559  IDENTIFIER        'z32'                               117     11  
+    560  REL_OP            '>'                                 117     15  
+    561  INTEGER_LIT       '5'                                 117     17  5
+    562  SEMICOLON         ';'                                 117     18  
+    563  IDENTIFIER        'sb3'                               118      5  
+    564  ASSIGN_OP         '='                                 118      9  
+    565  IDENTIFIER        'z32'                               118     11  
+    566  REL_OP            '<='                                118     15  
+    567  INTEGER_LIT       '30'                                118     18  30
+    568  SEMICOLON         ';'                                 118     20  
+    569  IDENTIFIER        'sb4'                               119      5  
+    570  ASSIGN_OP         '='                                 119      9  
+    571  IDENTIFIER        'z32'                               119     11  
+    572  REL_OP            '>='                                119     15  
+    573  INTEGER_LIT       '31'                                119     18  31
+    574  SEMICOLON         ';'                                 119     20  
+    575  IDENTIFIER        'sb5'                               120      5  
+    576  ASSIGN_OP         '='                                 120      9  
+    577  IDENTIFIER        'z32'                               120     11  
+    578  REL_OP            '=='                                120     15  
+    579  INTEGER_LIT       '30'                                120     18  30
+    580  SEMICOLON         ';'                                 120     20  
+    581  IDENTIFIER        'sb6'                               121      5  
+    582  ASSIGN_OP         '='                                 121      9  
+    583  IDENTIFIER        'z32'                               121     11  
+    584  REL_OP            '!='                                121     15  
+    585  INTEGER_LIT       '31'                                121     18  31
+    586  SEMICOLON         ';'                                 121     20  
+    587  IDENTIFIER        'sb7'                               122      5  
+    588  ASSIGN_OP         '='                                 122      9  
+    589  LOGIC_OP          '!'                                 122     11  
+    590  LPAREN            '('                                 122     12  
+    591  IDENTIFIER        'z32'                               122     13  
+    592  REL_OP            '=='                                122     17  
+    593  INTEGER_LIT       '31'                                122     20  31
+    594  RPAREN            ')'                                 122     22  
+    595  SEMICOLON         ';'                                 122     23  
+    596  IDENTIFIER        'sb8'                               124      5  
+    597  ASSIGN_OP         '='                                 124      9  
+    598  LPAREN            '('                                 124     11  
+    599  IDENTIFIER        'func1'                             124     12  
+    600  LPAREN            '('                                 124     17  
+    601  INTEGER_LIT       '1'                                 124     18  1
+    602  COMMA             ','                                 124     19  
+    603  INTEGER_LIT       '2'                                 124     21  2
+    604  COMMA             ','                                 124     22  
+    605  INTEGER_LIT       '3'                                 124     24  3
+    606  RPAREN            ')'                                 124     25  
+    607  ARITH_OP          '+'                                 124     27  
+    608  IDENTIFIER        'arr'                               124     29  
+    609  LBRACKET          '['                                 124     32  
+    610  INTEGER_LIT       '1'                                 124     33  1
+    611  RBRACKET          ']'                                 124     34  
+    612  ARITH_OP          '*'                                 124     36  
+    613  INTEGER_LIT       '2'                                 124     38  2
+    614  RPAREN            ')'                                 124     39  
+    615  REL_OP            '>'                                 124     41  
+    616  LPAREN            '('                                 124     43  
+    617  IDENTIFIER        'weight'                            124     44  
+    618  LPAREN            '('                                 124     50  
+    619  IDENTIFIER        'pt'                                124     51  
+    620  DOT               '.'                                 124     53  
+    621  IDENTIFIER        'x'                                 124     54  
+    622  RPAREN            ')'                                 124     55  
+    623  ARITH_OP          '-'                                 124     57  
+    624  IDENTIFIER        'BASE'                              124     59  
+    625  ARITH_OP          '/'                                 124     64  
+    626  INTEGER_LIT       '4'                                 124     66  4
+    627  RPAREN            ')'                                 124     67  
+    628  SEMICOLON         ';'                                 124     68  
+    629  KEYWORD           'print'                             126      5  
+    630  LPAREN            '('                                 126     10  
+    631  STRING_LIT        '"z32 < 100   ="'                   126     11  'z32 < 100   ='
+    632  COMMA             ','                                 126     26  
+    633  IDENTIFIER        'sb1'                               126     28  
+    634  RPAREN            ')'                                 126     31  
+    635  SEMICOLON         ';'                                 126     32  
+    636  KEYWORD           'print'                             127      5  
+    637  LPAREN            '('                                 127     10  
+    638  STRING_LIT        '"z32 > 5     ="'                   127     11  'z32 > 5     ='
+    639  COMMA             ','                                 127     26  
+    640  IDENTIFIER        'sb2'                               127     28  
+    641  RPAREN            ')'                                 127     31  
+    642  SEMICOLON         ';'                                 127     32  
+    643  KEYWORD           'print'                             128      5  
+    644  LPAREN            '('                                 128     10  
+    645  STRING_LIT        '"z32 <= 30   ="'                   128     11  'z32 <= 30   ='
+    646  COMMA             ','                                 128     26  
+    647  IDENTIFIER        'sb3'                               128     28  
+    648  RPAREN            ')'                                 128     31  
+    649  SEMICOLON         ';'                                 128     32  
+    650  KEYWORD           'print'                             129      5  
+    651  LPAREN            '('                                 129     10  
+    652  STRING_LIT        '"z32 >= 31   ="'                   129     11  'z32 >= 31   ='
+    653  COMMA             ','                                 129     26  
+    654  IDENTIFIER        'sb4'                               129     28  
+    655  RPAREN            ')'                                 129     31  
+    656  SEMICOLON         ';'                                 129     32  
+    657  KEYWORD           'print'                             130      5  
+    658  LPAREN            '('                                 130     10  
+    659  STRING_LIT        '"z32 == 30   ="'                   130     11  'z32 == 30   ='
+    660  COMMA             ','                                 130     26  
+    661  IDENTIFIER        'sb5'                               130     28  
+    662  RPAREN            ')'                                 130     31  
+    663  SEMICOLON         ';'                                 130     32  
+    664  KEYWORD           'print'                             131      5  
+    665  LPAREN            '('                                 131     10  
+    666  STRING_LIT        '"z32 != 31   ="'                   131     11  'z32 != 31   ='
+    667  COMMA             ','                                 131     26  
+    668  IDENTIFIER        'sb6'                               131     28  
+    669  RPAREN            ')'                                 131     31  
+    670  SEMICOLON         ';'                                 131     32  
+    671  KEYWORD           'print'                             132      5  
+    672  LPAREN            '('                                 132     10  
+    673  STRING_LIT        '"!(z32 == 31) ="'                  132     11  '!(z32 == 31) ='
+    674  COMMA             ','                                 132     27  
+    675  IDENTIFIER        'sb7'                               132     29  
+    676  RPAREN            ')'                                 132     32  
+    677  SEMICOLON         ';'                                 132     33  
+    678  KEYWORD           'print'                             133      5  
+    679  LPAREN            '('                                 133     10  
+    680  STRING_LIT        '"(func1(1,2,3) + arr[1] * 2) > (weight(pt.x) - BASE / 4) ="'    133     11  '(func1(1,2,3) + arr[1] * 2) > (weight(pt.x) - BASE / 4) ='
+    681  COMMA             ','                                 133     70  
+    682  IDENTIFIER        'sb8'                               133     72  
+    683  RPAREN            ')'                                 133     75  
+    684  SEMICOLON         ';'                                 133     76  
+    685  KEYWORD           'print'                             134      5  
+    686  LPAREN            '('                                 134     10  
+    687  STRING_LIT        '""'                                134     11  ''
+    688  RPAREN            ')'                                 134     13  
+    689  SEMICOLON         ';'                                 134     14  
+    690  KEYWORD           'print'                             139      5  
+    691  LPAREN            '('                                 139     10  
+    692  STRING_LIT        '"---- (d) complex boolean ----"'    139     11  '---- (d) complex boolean ----'
+    693  RPAREN            ')'                                 139     42  
+    694  SEMICOLON         ';'                                 139     43  
+    695  IDENTIFIER        'cb1'                               141      5  
+    696  ASSIGN_OP         '='                                 141      9  
+    697  LPAREN            '('                                 141     11  
+    698  IDENTIFIER        'x'                                 141     12  
+    699  REL_OP            '>'                                 141     14  
+    700  INTEGER_LIT       '5'                                 141     16  5
+    701  RPAREN            ')'                                 141     17  
+    702  LOGIC_OP          '&&'                                141     19  
+    703  LPAREN            '('                                 141     22  
+    704  IDENTIFIER        'y'                                 141     23  
+    705  REL_OP            '<'                                 141     25  
+    706  INTEGER_LIT       '100'                               141     27  100
+    707  RPAREN            ')'                                 141     30  
+    708  SEMICOLON         ';'                                 141     31  
+    709  IDENTIFIER        'cb2'                               142      5  
+    710  ASSIGN_OP         '='                                 142      9  
+    711  LPAREN            '('                                 142     11  
+    712  IDENTIFIER        'x'                                 142     12  
+    713  REL_OP            '>'                                 142     14  
+    714  INTEGER_LIT       '5'                                 142     16  5
+    715  RPAREN            ')'                                 142     17  
+    716  LOGIC_OP          '||'                                142     19  
+    717  LPAREN            '('                                 142     22  
+    718  IDENTIFIER        'y'                                 142     23  
+    719  REL_OP            '<'                                 142     25  
+    720  INTEGER_LIT       '0'                                 142     27  0
+    721  RPAREN            ')'                                 142     28  
+    722  SEMICOLON         ';'                                 142     29  
+    723  IDENTIFIER        'cb3'                               143      5  
+    724  ASSIGN_OP         '='                                 143      9  
+    725  LPAREN            '('                                 143     11  
+    726  IDENTIFIER        'x'                                 143     12  
+    727  REL_OP            '>='                                143     14  
+    728  INTEGER_LIT       '10'                                143     17  10
+    729  RPAREN            ')'                                 143     19  
+    730  LOGIC_OP          '&&'                                143     21  
+    731  LPAREN            '('                                 143     24  
+    732  IDENTIFIER        'y'                                 143     25  
+    733  REL_OP            '=='                                143     27  
+    734  INTEGER_LIT       '20'                                143     30  20
+    735  RPAREN            ')'                                 143     32  
+    736  LOGIC_OP          '&&'                                143     34  
+    737  LPAREN            '('                                 143     37  
+    738  IDENTIFIER        'z32'                               143     38  
+    739  REL_OP            '!='                                143     42  
+    740  INTEGER_LIT       '0'                                 143     45  0
+    741  RPAREN            ')'                                 143     46  
+    742  SEMICOLON         ';'                                 143     47  
+    743  KEYWORD           'print'                             145      5  
+    744  LPAREN            '('                                 145     10  
+    745  STRING_LIT        '"(x > 5) && (y < 100)               ="'    145     11  '(x > 5) && (y < 100)               ='
+    746  COMMA             ','                                 145     49  
+    747  IDENTIFIER        'cb1'                               145     51  
+    748  RPAREN            ')'                                 145     54  
+    749  SEMICOLON         ';'                                 145     55  
+    750  KEYWORD           'print'                             146      5  
+    751  LPAREN            '('                                 146     10  
+    752  STRING_LIT        '"(x > 5) || (y < 0)                 ="'    146     11  '(x > 5) || (y < 0)                 ='
+    753  COMMA             ','                                 146     49  
+    754  IDENTIFIER        'cb2'                               146     51  
+    755  RPAREN            ')'                                 146     54  
+    756  SEMICOLON         ';'                                 146     55  
+    757  KEYWORD           'print'                             147      5  
+    758  LPAREN            '('                                 147     10  
+    759  STRING_LIT        '"(x >= 10) && (y == 20) && (z32 != 0) ="'    147     11  '(x >= 10) && (y == 20) && (z32 != 0) ='
+    760  COMMA             ','                                 147     51  
+    761  IDENTIFIER        'cb3'                               147     53  
+    762  RPAREN            ')'                                 147     56  
+    763  SEMICOLON         ';'                                 147     57  
+    764  KEYWORD           'print'                             148      5  
+    765  LPAREN            '('                                 148     10  
+    766  STRING_LIT        '""'                                148     11  ''
+    767  RPAREN            ')'                                 148     13  
+    768  SEMICOLON         ';'                                 148     14  
+    769  KEYWORD           'print'                             154      5  
+    770  LPAREN            '('                                 154     10  
+    771  STRING_LIT        '"---- (e) complex logical ----"'    154     11  '---- (e) complex logical ----'
+    772  RPAREN            ')'                                 154     42  
+    773  SEMICOLON         ';'                                 154     43  
+    774  IDENTIFIER        'cl1'                               156      5  
+    775  ASSIGN_OP         '='                                 156      9  
+    776  LPAREN            '('                                 156     11  
+    777  LPAREN            '('                                 156     12  
+    778  IDENTIFIER        'func1'                             156     13  
+    779  LPAREN            '('                                 156     18  
+    780  INTEGER_LIT       '1'                                 156     19  1
+    781  COMMA             ','                                 156     20  
+    782  INTEGER_LIT       '2'                                 156     22  2
+    783  COMMA             ','                                 156     23  
+    784  INTEGER_LIT       '3'                                 156     25  3
+    785  RPAREN            ')'                                 156     26  
+    786  ARITH_OP          '+'                                 156     28  
+    787  IDENTIFIER        'arr'                               156     30  
+    788  LBRACKET          '['                                 156     33  
+    789  INTEGER_LIT       '0'                                 156     34  0
+    790  RBRACKET          ']'                                 156     35  
+    791  REL_OP            '>'                                 156     37  
+    792  IDENTIFIER        'pt'                                156     39  
+    793  DOT               '.'                                 156     41  
+    794  IDENTIFIER        'x'                                 156     42  
+    795  ARITH_OP          '*'                                 156     44  
+    796  INTEGER_LIT       '2'                                 156     46  2
+    797  RPAREN            ')'                                 156     47  
+    798  LOGIC_OP          '&&'                                156     49  
+    799  LOGIC_OP          '!'                                 156     52  
+    800  LPAREN            '('                                 156     53  
+    801  IDENTIFIER        'y'                                 156     54  
+    802  ARITH_OP          '%'                                 156     56  
+    803  INTEGER_LIT       '3'                                 156     58  3
+    804  REL_OP            '=='                                156     60  
+    805  INTEGER_LIT       '0'                                 156     63  0
+    806  RPAREN            ')'                                 156     64  
+    807  RPAREN            ')'                                 156     65  
+    808  LOGIC_OP          '||'                                157     11  
+    809  LPAREN            '('                                 157     14  
+    810  IDENTIFIER        'z32'                               157     15  
+    811  REL_OP            '<='                                157     19  
+    812  INTEGER_LIT       '30'                                157     22  30
+    813  LOGIC_OP          '&&'                                157     25  
+    814  LOGIC_OP          '!'                                 157     28  
+    815  LPAREN            '('                                 157     29  
+    816  IDENTIFIER        'x'                                 157     30  
+    817  REL_OP            '>'                                 157     32  
+    818  INTEGER_LIT       '1000'                              157     34  1000
+    819  RPAREN            ')'                                 157     38  
+    820  RPAREN            ')'                                 157     39  
+    821  SEMICOLON         ';'                                 157     40  
+    822  KEYWORD           'print'                             158      5  
+    823  LPAREN            '('                                 158     10  
+    824  STRING_LIT        '"((func1(1,2,3) + arr[0] > pt.x * 2) && !(y % 3 == 0))"'    158     11  '((func1(1,2,3) + arr[0] > pt.x * 2) && !(y % 3 == 0))'
+    825  COMMA             ','                                 159     11  
+    826  STRING_LIT        '"|| (z32 <= 30 && !(x > 1000)) ="'    159     13  '|| (z32 <= 30 && !(x > 1000)) ='
+    827  COMMA             ','                                 159     46  
+    828  IDENTIFIER        'cl1'                               159     48  
+    829  RPAREN            ')'                                 159     51  
+    830  SEMICOLON         ';'                                 159     52  
+    831  IDENTIFIER        'cl2'                               161      5  
+    832  ASSIGN_OP         '='                                 161      9  
+    833  LPAREN            '('                                 161     11  
+    834  IDENTIFIER        'arr'                               161     12  
+    835  LBRACKET          '['                                 161     15  
+    836  INTEGER_LIT       '4'                                 161     16  4
+    837  RBRACKET          ']'                                 161     17  
+    838  ARITH_OP          '-'                                 161     19  
+    839  INTEGER_LIT       '50'                                161     21  50
+    840  REL_OP            '>'                                 161     24  
+    841  INTEGER_LIT       '0'                                 161     26  0
+    842  LOGIC_OP          '&&'                                161     28  
+    843  LOGIC_OP          '!'                                 161     31  
+    844  LPAREN            '('                                 161     32  
+    845  IDENTIFIER        'pt'                                161     33  
+    846  DOT               '.'                                 161     35  
+    847  IDENTIFIER        'y'                                 161     36  
+    848  REL_OP            '>='                                161     38  
+    849  INTEGER_LIT       '4'                                 161     41  4
+    850  RPAREN            ')'                                 161     42  
+    851  RPAREN            ')'                                 161     43  
+    852  LOGIC_OP          '||'                                161     45  
+    853  LPAREN            '('                                 161     48  
+    854  LOGIC_OP          '!'                                 161     49  
+    855  LPAREN            '('                                 161     50  
+    856  IDENTIFIER        'z32'                               161     51  
+    857  REL_OP            '=='                                161     55  
+    858  INTEGER_LIT       '30'                                161     58  30
+    859  RPAREN            ')'                                 161     60  
+    860  LOGIC_OP          '&&'                                161     62  
+    861  IDENTIFIER        'sm4'                               161     65  
+    862  REL_OP            '!='                                161     69  
+    863  INTEGER_LIT       '2'                                 161     72  2
+    864  RPAREN            ')'                                 161     73  
+    865  SEMICOLON         ';'                                 161     74  
+    866  KEYWORD           'print'                             162      5  
+    867  LPAREN            '('                                 162     10  
+    868  STRING_LIT        '"(arr[4] - 50 > 0 && !(pt.y >= 4)) || (!(z32 == 30) && sm4 != 2) ="'    162     11  '(arr[4] - 50 > 0 && !(pt.y >= 4)) || (!(z32 == 30) && sm4 != 2) ='
+    869  COMMA             ','                                 162     78  
+    870  IDENTIFIER        'cl2'                               162     80  
+    871  RPAREN            ')'                                 162     83  
+    872  SEMICOLON         ';'                                 162     84  
+    873  IDENTIFIER        'cl3'                               164      5  
+    874  ASSIGN_OP         '='                                 164      9  
+    875  LOGIC_OP          '!'                                 164     11  
+    876  LPAREN            '('                                 164     12  
+    877  LPAREN            '('                                 164     13  
+    878  IDENTIFIER        'x'                                 164     14  
+    879  ARITH_OP          '+'                                 164     16  
+    880  IDENTIFIER        'y'                                 164     18  
+    881  REL_OP            '<'                                 164     20  
+    882  IDENTIFIER        'z32'                               164     22  
+    883  RPAREN            ')'                                 164     25  
+    884  LOGIC_OP          '||'                                164     27  
+    885  LPAREN            '('                                 164     30  
+    886  IDENTIFIER        'weight'                            164     31  
+    887  LPAREN            '('                                 164     37  
+    888  IDENTIFIER        'pt'                                164     38  
+    889  DOT               '.'                                 164     40  
+    890  IDENTIFIER        'y'                                 164     41  
+    891  RPAREN            ')'                                 164     42  
+    892  ARITH_OP          '%'                                 164     44  
+    893  INTEGER_LIT       '2'                                 164     46  2
+    894  REL_OP            '=='                                164     48  
+    895  INTEGER_LIT       '0'                                 164     51  0
+    896  RPAREN            ')'                                 164     52  
+    897  RPAREN            ')'                                 164     53  
+    898  LOGIC_OP          '&&'                                164     55  
+    899  LPAREN            '('                                 164     58  
+    900  IDENTIFIER        'arr'                               164     59  
+    901  LBRACKET          '['                                 164     62  
+    902  INTEGER_LIT       '3'                                 164     63  3
+    903  RBRACKET          ']'                                 164     64  
+    904  ARITH_OP          '/'                                 164     66  
+    905  INTEGER_LIT       '4'                                 164     68  4
+    906  REL_OP            '=='                                164     70  
+    907  INTEGER_LIT       '10'                                164     73  10
+    908  RPAREN            ')'                                 164     75  
+    909  SEMICOLON         ';'                                 164     76  
+    910  KEYWORD           'print'                             165      5  
+    911  LPAREN            '('                                 165     10  
+    912  STRING_LIT        '"!((x + y < z32) || (weight(pt.y) % 2 == 0)) && (arr[3] / 4 == 10) ="'    165     11  '!((x + y < z32) || (weight(pt.y) % 2 == 0)) && (arr[3] / 4 == 10) ='
+    913  COMMA             ','                                 165     80  
+    914  IDENTIFIER        'cl3'                               165     82  
+    915  RPAREN            ')'                                 165     85  
+    916  SEMICOLON         ';'                                 165     86  
+    917  KEYWORD           'print'                             166      5  
+    918  LPAREN            '('                                 166     10  
+    919  STRING_LIT        '""'                                166     11  ''
+    920  RPAREN            ')'                                 166     13  
+    921  SEMICOLON         ';'                                 166     14  
+    922  KEYWORD           'print'                             170      5  
+    923  LPAREN            '('                                 170     10  
+    924  STRING_LIT        '"---- short-circuit evaluation ----"'    170     11  '---- short-circuit evaluation ----'
+    925  RPAREN            ')'                                 170     47  
+    926  SEMICOLON         ';'                                 170     48  
+    927  KEYWORD           'print'                             171      5  
+    928  LPAREN            '('                                 171     10  
+    929  STRING_LIT        '"false && noisy(true):"'           171     11  'false && noisy(true):'
+    930  RPAREN            ')'                                 171     34  
+    931  SEMICOLON         ';'                                 171     35  
+    932  IDENTIFIER        'cb1'                               172      5  
+    933  ASSIGN_OP         '='                                 172      9  
+    934  BOOL_LIT          'false'                             172     11  False
+    935  LOGIC_OP          '&&'                                172     17  
+    936  IDENTIFIER        'noisy'                             172     20  
+    937  LPAREN            '('                                 172     25  
+    938  BOOL_LIT          'true'                              172     26  True
+    939  RPAREN            ')'                                 172     30  
+    940  SEMICOLON         ';'                                 172     31  
+    941  KEYWORD           'print'                             173      5  
+    942  LPAREN            '('                                 173     10  
+    943  STRING_LIT        '"   result"'                       173     11  '   result'
+    944  COMMA             ','                                 173     22  
+    945  IDENTIFIER        'cb1'                               173     24  
+    946  COMMA             ','                                 173     27  
+    947  STRING_LIT        '"- noisy() stayed silent, so it never ran"'    173     29  '- noisy() stayed silent, so it never ran'
+    948  RPAREN            ')'                                 173     71  
+    949  SEMICOLON         ';'                                 173     72  
+    950  KEYWORD           'print'                             174      5  
+    951  LPAREN            '('                                 174     10  
+    952  STRING_LIT        '"true || noisy(true):"'            174     11  'true || noisy(true):'
+    953  RPAREN            ')'                                 174     33  
+    954  SEMICOLON         ';'                                 174     34  
+    955  IDENTIFIER        'cb2'                               175      5  
+    956  ASSIGN_OP         '='                                 175      9  
+    957  BOOL_LIT          'true'                              175     11  True
+    958  LOGIC_OP          '||'                                175     16  
+    959  IDENTIFIER        'noisy'                             175     19  
+    960  LPAREN            '('                                 175     24  
+    961  BOOL_LIT          'true'                              175     25  True
+    962  RPAREN            ')'                                 175     29  
+    963  SEMICOLON         ';'                                 175     30  
+    964  KEYWORD           'print'                             176      5  
+    965  LPAREN            '('                                 176     10  
+    966  STRING_LIT        '"   result"'                       176     11  '   result'
+    967  COMMA             ','                                 176     22  
+    968  IDENTIFIER        'cb2'                               176     24  
+    969  COMMA             ','                                 176     27  
+    970  STRING_LIT        '"- again skipped"'                 176     29  '- again skipped'
+    971  RPAREN            ')'                                 176     46  
+    972  SEMICOLON         ';'                                 176     47  
+    973  KEYWORD           'print'                             177      5  
+    974  LPAREN            '('                                 177     10  
+    975  STRING_LIT        '"true && noisy(false):"'           177     11  'true && noisy(false):'
+    976  RPAREN            ')'                                 177     34  
+    977  SEMICOLON         ';'                                 177     35  
+    978  IDENTIFIER        'cb3'                               178      5  
+    979  ASSIGN_OP         '='                                 178      9  
+    980  BOOL_LIT          'true'                              178     11  True
+    981  LOGIC_OP          '&&'                                178     16  
+    982  IDENTIFIER        'noisy'                             178     19  
+    983  LPAREN            '('                                 178     24  
+    984  BOOL_LIT          'false'                             178     25  False
+    985  RPAREN            ')'                                 178     30  
+    986  SEMICOLON         ';'                                 178     31  
+    987  KEYWORD           'print'                             179      5  
+    988  LPAREN            '('                                 179     10  
+    989  STRING_LIT        '"   result"'                       179     11  '   result'
+    990  COMMA             ','                                 179     22  
+    991  IDENTIFIER        'cb3'                               179     24  
+    992  COMMA             ','                                 179     27  
+    993  STRING_LIT        '"- here the right operand had to be evaluated"'    179     29  '- here the right operand had to be evaluated'
+    994  RPAREN            ')'                                 179     75  
+    995  SEMICOLON         ';'                                 179     76  
+    996  RBRACE            '}'                                 180      1  
+    997  EOF               ''                                  181      1  
+
+========================================================================
+  STATISTICS
+========================================================================
+
+  Total tokens  : 996
+  Total errors  : 0
+  Scan time     : 3.463 ms
+  Source lines  : 181
+  Source chars  : 6816
+
+  Token type breakdown:
+    IDENTIFIER            200
+    SEMICOLON             100
+    LPAREN                95
+    RPAREN                95
+    COMMA                 94
+    KEYWORD               88
+    INTEGER_LIT           79
+    STRING_LIT            64
+    ARITH_OP              44
+    ASSIGN_OP             36
+    REL_OP                26
+    LOGIC_OP              21
+    DOT                   12
+    LBRACKET              9
+    RBRACKET              9
+    LBRACE                6
+    RBRACE                6
+    FLOAT_LIT             6
+    BOOL_LIT              6
+

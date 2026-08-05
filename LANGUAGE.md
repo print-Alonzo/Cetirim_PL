@@ -216,7 +216,7 @@ void main() {
 
 This is the single most important thing to know about immutability here.
 Rebinding the name is rejected, but mutating an element or field *through* the
-name is allowed. This is why `prog2_loops_arrays.src` can bubble-sort a
+name is allowed. This is why `samples/prog2_loops_arrays.src` can bubble-sort a
 `val int scores[5]`.
 
 ```c
@@ -620,7 +620,9 @@ error, not silent corruption.
 void main() {
     val int primes[4] = {2, 3, 5, 7};   // with an initializer
     var int buf[8];                     // zero-filled
-    var int grid[3][3];                 // two-dimensional
+    var int grid[3][3];                 // two-dimensional (C-style: first
+                                        // bracket is the outer dimension,
+                                        // so int g[2][3] is 2 rows of 3)
 
     buf[0] = primes[3];
     grid[1][2] = 42;
@@ -644,8 +646,8 @@ void main() {
 }
 ```
 
-Only that outermost dimension may be dynamic — in `int grid[3][n]` the `n` is
-fine, but `int grid[n][3]` is rejected.
+Only that outermost dimension — the *first* bracket written — may be dynamic:
+in `int grid[n][3]` the `n` is fine, but `int grid[3][n]` is rejected.
 
 ### Structs
 
@@ -906,7 +908,7 @@ Deliberate scope limits, so you know what not to reach for:
 
 - **No modules or imports.** A program is a single `.src` file.
 - **No standard library** beyond `print` and `input`. Sorting, math helpers,
-  and string utilities must be hand-written — `prog2_loops_arrays.src` includes
+  and string utilities must be hand-written — `samples/prog2_loops_arrays.src` includes
   a bubble sort.
 - **No casts.** Only the implicit `char → int → float` promotions exist.
 - **No string concatenation operator.** Use interpolated strings.
@@ -919,7 +921,8 @@ Deliberate scope limits, so you know what not to reach for:
 ## Where to look next
 
 - [`README.md`](README.md) — running the interpreter, CLI flags, output formats.
-- `prog1_calculator.src` … `prog5_advanced.src` — the five sample programs,
-  which between them exercise every construct in this manual.
+- `samples/` — the five sample programs (`prog1_calculator.src` …
+  `prog5_advanced.src`), which between them exercise every construct in this
+  manual.
 - `tests/` — small focused programs, one feature each.
 - [`LIMITATIONS.md`](LIMITATIONS.md) — design decisions and known edge cases.
