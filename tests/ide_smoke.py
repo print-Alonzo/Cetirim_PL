@@ -29,7 +29,7 @@ sys.path.insert(0, str(REPO))
 import tkinter as tk
 
 try:
-    from cetirim_ide import SAMPLE, CetirimIDE
+    from cetirim_ide import SAMPLE, THEME, CetirimIDE
     ide = CetirimIDE()
 except tk.TclError as e:
     log(f"SKIP-GUI: cannot create a Tk window here ({e})")
@@ -65,6 +65,37 @@ def finished():
     text = console_text()
     return ("$ Program finished." in text or "$ Program stopped." in text
             or "Runtime error" in text)
+
+
+# --- Treeview readers ------------------------------------------------------
+# The debugger panels and the Problems list are Treeviews (aligned columns
+# beat "name = value" strings in a Listbox), so the checks below read rows
+# through these instead of Listbox.get().
+
+def tree_texts(tree, parent=""):
+    """Every row's column-#0 text, depth-first."""
+    rows = []
+    for item in tree.get_children(parent):
+        rows.append(tree.item(item, "text"))
+        rows.extend(tree_texts(tree, item))
+    return rows
+
+
+def tree_pairs(tree, parent=""):
+    """Leaf rows of a name/value tree, rendered "name = value". Group rows
+    (Locals/Globals) carry no values and are skipped."""
+    rows = []
+    for item in tree.get_children(parent):
+        values = tree.item(item, "values")
+        if values:
+            rows.append(f"{tree.item(item, 'text')} = {values[0]}")
+        rows.extend(tree_pairs(tree, item))
+    return rows
+
+
+def problem_rows():
+    return [" ".join((ide.problems.item(i, "text"),) + tuple(ide.problems.item(i, "values")))
+            for i in ide.problems.get_children()]
 
 
 def paused_at(line):
@@ -118,9 +149,11 @@ def driver():
     ide.debug_program()
     ok = yield (paused_at(87), 30, "pause at breakpoint 87")
     if ok:
-        stack = list(ide.callstack_list.get(0, "end"))
+        stack = tree_texts(ide.callstack_list)
         check("call stack shows main at pause", stack == ["main"], repr(stack))
-        var_rows = list(ide.vars_list.get(0, "end"))
+        var_rows = tree_pairs(ide.vars_list)
+        check("variables panel groups rows under Locals",
+              "Locals" in tree_texts(ide.vars_list), repr(tree_texts(ide.vars_list)[:4]))
         check("variables panel shows x = 10", "x = 10" in var_rows, repr(var_rows))
         check("variables panel shows y = 20", "y = 20" in var_rows, repr(var_rows))
         check("variables panel hides _t temps", not any("_t" in r for r in var_rows), repr(var_rows))
@@ -128,7 +161,7 @@ def driver():
         ide.watch_entry.delete(0, "end")
         ide.watch_entry.insert(0, "x")
         ide.add_watch()
-        watch_rows = list(ide.watch_list.get(0, "end"))
+        watch_rows = tree_pairs(ide.watch_list)
         check("watch resolves x = 10", "x = 10" in watch_rows, repr(watch_rows))
         ide.debug_step()
         ok = yield (paused_at(88), 30, "step to line 88")
@@ -141,8 +174,8 @@ def driver():
         check("debug run produced full program output", expected3 in console_text(),
               repr(console_text()[:200]))
         check("watch shows <not in scope> after finish",
-              any("not in scope" in r for r in ide.watch_list.get(0, "end")),
-              repr(list(ide.watch_list.get(0, "end"))))
+              any("not in scope" in r for r in tree_pairs(ide.watch_list)),
+              repr(tree_pairs(ide.watch_list)))
 
     # ---- Test 5: debugger Stop from a paused state -------------------------
     load(prog3.read_text(encoding="utf-8"), prog3)
@@ -160,8 +193,18 @@ def driver():
     # ---- Test 6: Problems tab on a syntax error, run bails safely ----------
     load("void main() {\n    print(1)\n}\n")
     ok6 = ide.check_code()
-    problems = list(ide.problems.get(0, "end"))
+    problems = problem_rows()
     check("check_code flags the missing semicolon", ok6 is False and len(problems) >= 1, repr(problems))
+    check("problem row carries its source line for navigation",
+          any(v for v in ide._problem_lines.values()), repr(ide._problem_lines))
+    check("problem row splits position out of the message",
+          any("Line" in r for r in problems), repr(problems))
+    check("problems tab shows the diagnostic count as a badge",
+          "Problems" in ide.bottom_tabs._entry(ide.problems_frame)["label"].cget("text")
+          and ide.bottom_tabs._entry(ide.problems_frame)["label"].cget("text").strip() != "Problems",
+          repr(ide.bottom_tabs._entry(ide.problems_frame)["label"].cget("text")))
+    check("status bar summarises the diagnostics", "✖" in ide.status.cget("text"),
+          repr(ide.status.cget("text")))
     ide.run_program()  # must return early without starting a thread
     check("run_program bails on syntax errors without crashing", ide.executor is None)
 
@@ -255,8 +298,8 @@ def driver():
     ide.executor = types.SimpleNamespace(call_names=[], frame={}, globals={})
     ide.refresh_debug_panels()
     check("call-stack panel falls back to (top level)",
-          "(top level)" in ide.callstack_list.get(0, "end"),
-          repr(list(ide.callstack_list.get(0, "end"))))
+          "(top level)" in tree_texts(ide.callstack_list),
+          repr(tree_texts(ide.callstack_list)))
     ide.executor = None
 
     # ---- Test 13: find/replace bar -----------------------------------------
@@ -281,9 +324,11 @@ def driver():
     # ---- Test 14: Symbols tab shows the semantic analyzer's symbol table ---
     load(prog3.read_text(encoding="utf-8"), prog3)
     ide.check_code()
-    problems_rows = list(ide.problems.get(0, "end"))
+    problems_rows = problem_rows()
     check("problems shows the ✓ all-clear row on a clean program",
           bool(problems_rows) and problems_rows[0].startswith("✓"), repr(problems_rows))
+    check("status bar reports a clean check", "No problems" in ide.status.cget("text"),
+          repr(ide.status.cget("text")))
     roots = {ide.symbols_tree.item(i, "text"): i for i in ide.symbols_tree.get_children()}
     check("symbol table lists a Functions root", "Functions" in roots, repr(list(roots)))
     if "Functions" in roots:
@@ -308,6 +353,48 @@ def driver():
         ide.debug_stop()
         yield (finished, 30, "stop after the status-segment test")
     ide.breakpoints.clear()
+
+    # ---- Test 16: panel tab strip behaves like the Notebook it replaced ----
+    ide.bottom_tabs.select(ide.symbols_frame)
+    check("tab strip reports the selected frame",
+          ide.bottom_tabs.select() == str(ide.symbols_frame), repr(ide.bottom_tabs.select()))
+    accented = [e["text"] for e in ide.bottom_tabs._tabs
+                if e["underline"].cget("background") == THEME["accent"]]
+    check("exactly the selected tab carries the accent underline",
+          accented == ["Symbols"], repr(accented))
+    ide.bottom_tabs.select(0)
+    check("tab strip selects by index too", ide.bottom_tabs.select() != str(ide.symbols_frame))
+
+    # ---- Test 17: the outline, caret line and font-size controls ------------
+    load("struct Point {\n    int x;\n}\n\nvoid main() {\n    print(1);\n}\n")
+    outline_rows = [ide.outline.item(i, "text") for i in ide.outline.get_children()]
+    check("outline lists the struct and the function",
+          any("Point" in r for r in outline_rows) and any("main" in r for r in outline_rows),
+          repr(outline_rows))
+    ide.editor.mark_set("insert", "6.0")
+    ide._sync_caret()
+    caret = ide.editor.tag_ranges("cursor_line")
+    check("caret-line highlight follows the cursor",
+          bool(caret) and str(caret[0]).startswith("6."), repr([str(c) for c in caret]))
+    before = int(ide.font_editor.cget("size"))
+    ide.change_font_size(2)
+    grown = int(ide.font_editor.cget("size"))
+    ide.change_font_size(-2)
+    check("font size control resizes the editor font",
+          grown == before + 2 and int(ide.font_editor.cget("size")) == before,
+          f"{before} -> {grown} -> {ide.font_editor.cget('size')}")
+    ide.change_font_size(-99)
+    check("font size stays inside its bounds", int(ide.font_editor.cget("size")) == 9,
+          repr(ide.font_editor.cget("size")))
+    ide.font_editor.configure(size=before)
+
+    # ---- Test 18: debugger transport lives in the toolbar, idle by default --
+    check("transport buttons are disabled with no run in flight",
+          all(str(b.cget("state")) == "disabled"
+              for b in (ide.step_btn, ide.continue_btn, ide.stop_btn)))
+    check("transport buttons sit in the header, not inside the bottom panel",
+          not str(ide.step_btn).startswith(str(ide.bottom_tabs)),
+          f"{ide.step_btn} vs {ide.bottom_tabs}")
 
 
 gen = driver()
