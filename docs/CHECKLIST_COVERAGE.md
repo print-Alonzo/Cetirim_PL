@@ -3,10 +3,10 @@
 Maps every row of `docs/CSC617M_Machine_Problem_Checklist_Rubric.pdf` to the
 program that demonstrates it. Two sets of programs are referenced:
 
-- **`prog1`–`prog5`** — the five original sample programs.
+- **`prog1`–`prog5`** — the five original sample programs, in `samples/`.
 - **`check1`–`check5`** — a coverage set written specifically against this
   rubric, one program per group of rows, so no row depends on being spotted
-  inside a larger program.
+  inside a larger program. In `checks/`.
 
 All ten are registered in `run_tests.py` as positive fixtures. Each one has a
 committed token stream, quadruple listing, and expected output, which is what
@@ -108,10 +108,10 @@ Recovery is implemented at all three front-end phases, and the suite asserts
 it at each one rather than only demonstrating it:
 
 - **Scanner** — emits an `ERROR` token and resumes, so every valid token after
-  a bad one is still reported. `test_errors.src` puts four different lexical
-  errors between otherwise valid declarations, and `run_tests.py`'s
+  a bad one is still reported. `tests/test_errors.src` puts four different
+  lexical errors between otherwise valid declarations, and `run_tests.py`'s
   `check_scanner_recovery` diffs its whole scanner report against
-  `test_errors_tokens.txt`. Counting diagnostics would prove nothing here —
+  `tests/test_errors_tokens.txt`. Counting diagnostics would prove nothing here —
   a lexical error never stops the scan, so a scanner that gave up after the
   first one would still report an error and exit `2`; what gives it away is
   the 30-token stream getting shorter, which the golden diff catches.
@@ -125,7 +125,7 @@ it at each one rather than only demonstrating it:
   what `sem_multi_errors.src` asserts, at five.
 
 ```bash
-python scanner.py test_errors.src              # four errors, stream continues
+python scanner.py tests/test_errors.src        # four errors, stream continues
 python interpreter.py tests/syn_multi_errors.src   # both mistakes reported
 ```
 
@@ -161,7 +161,7 @@ It closes with a short-circuit demonstration: `noisy()` prints when it runs, so
 `false && noisy(true)` proves the right operand was never evaluated.
 
 ```bash
-python interpreter.py check2_expressions.src
+python interpreter.py checks/check2_expressions.src
 ```
 
 ---
@@ -174,8 +174,8 @@ elimination — run to a fixpoint. It never mutates its input, so both listings
 can be shown side by side:
 
 ```bash
-python optimizer.py check2_expressions.src      # annotated before/after report
-python interpreter.py check2_expressions.src -O # run the optimized IR
+python optimizer.py checks/check2_expressions.src      # annotated before/after report
+python interpreter.py checks/check2_expressions.src -O # run the optimized IR
 ```
 
 On `check2_expressions.src` this removes 108 of 491 quadruples. The correctness
@@ -212,7 +212,7 @@ is genuine reference semantics rather than a simulated address space — there
 are no addresses, and no pointer arithmetic is possible.
 
 ```bash
-python interpreter.py check5_io_heap.src < check5_io_heap.in
+python interpreter.py checks/check5_io_heap.src < checks/check5_io_heap.in
 ```
 
 ---

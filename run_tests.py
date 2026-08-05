@@ -4,8 +4,9 @@ interpreter pipeline.
     python run_tests.py            run every check, report pass/fail
     python run_tests.py --update   regenerate the golden files from current output
 
-Positive fixtures (prog1..prog5, plus the check1..check5 checklist-coverage
-set): each program's scanner token stream, compiled quadruple listing, and
+Positive fixtures (samples/prog1..prog5, plus the checks/check1..check5
+checklist-coverage set): each program's scanner token stream, compiled
+quadruple listing, and
 executed output are diffed against the committed goldens (<name>_tokens.txt,
 <name>_ir.txt, <name>_expected.txt). Programs that call input() read from
 <name>.in. Diffing all three per program is what pins the rubric's three
@@ -32,9 +33,10 @@ The scanner recovery check (check_scanner_recovery) is the third phase's
 half of that same row, and needs a different mechanism: a lexical error
 does not stop the scanner, so there is no exit code or tag count that
 distinguishes recovering from halting. What distinguishes them is the token
-stream itself, so test_errors.src - four different lexical errors, with
-valid tokens between and after them - has its whole scanner report diffed
-against test_errors_tokens.txt. A scanner that gave up at the first bad
+stream itself, so tests/test_errors.src - four different lexical errors,
+with valid tokens between and after them - has its whole scanner report
+diffed against tests/test_errors_tokens.txt. A scanner that gave up at the
+first bad
 character would produce a visibly shorter stream. Note that scanner.py's
 CLI exits 2 when it recorded any error, so this check expects 2, not 0.
 
@@ -64,20 +66,20 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 
 PROGRAMS = [
-    "prog1_calculator",
-    "prog2_loops_arrays",
-    "prog3_functions",
-    "prog4_structs_match_exceptions",
-    "prog5_advanced",
+    "samples/prog1_calculator",
+    "samples/prog2_loops_arrays",
+    "samples/prog3_functions",
+    "samples/prog4_structs_match_exceptions",
+    "samples/prog5_advanced",
     # The checklist-coverage set: one program per group of rows in the
     # course rubric (docs/CSC617M_Machine_Problem_Checklist_Rubric.pdf), so
     # every graded construct has a program that demonstrates it running.
     # See docs/CHECKLIST_COVERAGE.md for the row-by-row map.
-    "check1_declarations",
-    "check2_expressions",
-    "check3_control_flow",
-    "check4_functions",
-    "check5_io_heap",
+    "checks/check1_declarations",
+    "checks/check2_expressions",
+    "checks/check3_control_flow",
+    "checks/check4_functions",
+    "checks/check5_io_heap",
 ]
 
 NEGATIVE_FIXTURES = [
@@ -119,7 +121,7 @@ NEGATIVE_FIXTURES = [
 # The scanner's recovery fixture. Unlike the fixtures above it is checked by
 # diffing its whole token stream (see check_scanner_recovery), since a
 # scanner that halted at the first error would still emit the tag and exit 2.
-SCANNER_RECOVERY = "test_errors"
+SCANNER_RECOVERY = "tests/test_errors"
 
 FEATURE_FIXTURES = [
     "struct_array_init",

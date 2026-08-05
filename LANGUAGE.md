@@ -216,7 +216,7 @@ void main() {
 
 This is the single most important thing to know about immutability here.
 Rebinding the name is rejected, but mutating an element or field *through* the
-name is allowed. This is why `prog2_loops_arrays.src` can bubble-sort a
+name is allowed. This is why `samples/prog2_loops_arrays.src` can bubble-sort a
 `val int scores[5]`.
 
 ```c
@@ -908,7 +908,7 @@ Deliberate scope limits, so you know what not to reach for:
 
 - **No modules or imports.** A program is a single `.src` file.
 - **No standard library** beyond `print` and `input`. Sorting, math helpers,
-  and string utilities must be hand-written — `prog2_loops_arrays.src` includes
+  and string utilities must be hand-written — `samples/prog2_loops_arrays.src` includes
   a bubble sort.
 - **No casts.** Only the implicit `char → int → float` promotions exist.
 - **No string concatenation operator.** Use interpolated strings.
@@ -921,7 +921,8 @@ Deliberate scope limits, so you know what not to reach for:
 ## Where to look next
 
 - [`README.md`](README.md) — running the interpreter, CLI flags, output formats.
-- `prog1_calculator.src` … `prog5_advanced.src` — the five sample programs,
-  which between them exercise every construct in this manual.
+- `samples/` — the five sample programs (`prog1_calculator.src` …
+  `prog5_advanced.src`), which between them exercise every construct in this
+  manual.
 - `tests/` — small focused programs, one feature each.
 - [`LIMITATIONS.md`](LIMITATIONS.md) — design decisions and known edge cases.
