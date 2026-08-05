@@ -29,6 +29,7 @@ sys.path.insert(0, str(REPO))
 import tkinter as tk
 
 try:
+    from scanner import TT, Scanner
     from cetirim_ide import SAMPLE, THEME, CetirimIDE
     ide = CetirimIDE()
 except tk.TclError as e:
@@ -447,6 +448,83 @@ def driver():
     check("transport buttons sit in the header, not inside the bottom panel",
           not str(ide.step_btn).startswith(str(ide.bottom_tabs)),
           f"{ide.step_btn} vs {ide.bottom_tabs}")
+
+    # ---- Test 19: syntax highlighting is scanner-driven ---------------------
+    # Every check here is a case the two regexes this replaced got wrong: they
+    # could not see that a word sat inside a comment or a string, and they
+    # measured a literal by its escape-resolved lexeme rather than its width
+    # on screen.
+    SYNTAX_TAGS = {"keyword", "type", "string", "number", "comment", "function", "error"}
+
+    def tags_at(needle, offset=0):
+        """Syntax tags on the character `offset` past the start of `needle`."""
+        start = ide.editor.search(needle, "1.0", "end")
+        if not start:
+            return set()
+        return SYNTAX_TAGS.intersection(ide.editor.tag_names(f"{start}+{offset}c"))
+
+    load('// a comment that has (parens) in it\n'
+         'const string URL = "http://x.com";\n'
+         'const string ESC = "a\\tb";\n'
+         '/* a block\n'
+         '   comment */\n'
+         'int twice(int n) {\n'
+         '    return n * 2;\n'
+         '}\n'
+         'void main() {\n'
+         '    var int i;\n'
+         '    for (i = 0; i < 3; i = i + 1) {\n'
+         '        print(twice(i));\n'
+         '    }\n'
+         '}\n')
+
+    check("a word before '(' inside a comment stays a comment",
+          tags_at("has (") == {"comment"}, repr(tags_at("has (")))
+    check("a keyword before '(' is not painted as a call",
+          tags_at("for (") == {"keyword"}, repr(tags_at("for (")))
+    check("print is a keyword, not a call",
+          tags_at("print(") == {"keyword"}, repr(tags_at("print(")))
+    check("a real call is painted as a function",
+          tags_at("twice(i)") == {"function"}, repr(tags_at("twice(i)")))
+    check("'//' inside a string literal does not start a comment",
+          tags_at('"http://x.com"', 8) == {"string"}, repr(tags_at('"http://x.com"', 8)))
+    # 6 source characters: " a \ t b " - the old length arithmetic used the
+    # 5-character resolved lexeme and left the closing quote unpainted.
+    check("a literal with an escape is painted through its closing quote",
+          tags_at('"a\\tb"', 5) == {"string"}, repr(tags_at('"a\\tb"', 5)))
+    check("a multi-line block comment is painted to its end",
+          tags_at("comment */", 9) == {"comment"}, repr(tags_at("comment */", 9)))
+
+    # An unterminated block comment: the regex needed the closing '*/' and so
+    # left it plain until the moment it was typed.
+    load("var int x;\n/* still typing this\n")
+    check("an unterminated block comment is grey while being typed",
+          tags_at("still typing") == {"comment"}, repr(tags_at("still typing")))
+    # The editor's buffer has no trailing newline, so the comment runs to the
+    # last character - which the scanner's loop used to stop one short of,
+    # leaking it back out as a stray token the highlighter would then colour.
+    leaked = [t.lexeme for t in Scanner(ide.source()).scan_all()[0] if t.ttype != TT.EOF]
+    check("an unterminated block comment consumes its last character",
+          leaked == ["var", "int", "x", ";"], repr(leaked))
+
+    # An unterminated string marks the whole run, not just its opening quote.
+    load('void main() {\n    print("still typing\n}\n')
+    check("an unterminated string literal is marked across its whole run",
+          "error" in ide.editor.tag_names(ide.editor.search("still", "1.0", "end")),
+          repr(ide.editor.tag_names(ide.editor.search("still", "1.0", "end"))))
+
+    # ---- Test 20: token classes differ in weight/slant, not only colour -----
+    check("keywords are bold", str(ide.editor.tag_cget("keyword", "font")) == str(ide.font_editor_bold),
+          repr(ide.editor.tag_cget("keyword", "font")))
+    check("comments are italic", str(ide.editor.tag_cget("comment", "font")) == str(ide.font_editor_italic),
+          repr(ide.editor.tag_cget("comment", "font")))
+    base = int(ide.font_editor.cget("size"))
+    ide.change_font_size(2)
+    check("the bold and italic faces resize with the editor font",
+          int(ide.font_editor_bold.cget("size")) == base + 2
+          and int(ide.font_editor_italic.cget("size")) == base + 2,
+          f"bold={ide.font_editor_bold.cget('size')} italic={ide.font_editor_italic.cget('size')}")
+    ide.change_font_size(-2)
 
 
 gen = driver()

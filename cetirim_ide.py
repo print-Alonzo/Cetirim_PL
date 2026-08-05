@@ -288,6 +288,13 @@ class CetirimIDE(tk.Tk):
         mono = first(["SF Mono", "Menlo", "Cascadia Code", "Consolas", "DejaVu Sans Mono"], "TkFixedFont")
         ui = first(["SF Pro Text", "Helvetica Neue", "Segoe UI", "DejaVu Sans"], "TkDefaultFont")
         self.font_editor = tkfont.Font(family=mono, size=13)
+        # Two derived editor faces, so a token's *type* is legible from its
+        # weight and slant, not colour alone: keywords bold, comments
+        # italic. Every mono family picked above keeps one advance width
+        # across faces, so the gutter and the caret column stay aligned.
+        # `change_font_size` resizes all three together.
+        self.font_editor_bold = tkfont.Font(family=mono, size=13, weight="bold")
+        self.font_editor_italic = tkfont.Font(family=mono, size=13, slant="italic")
         self.font_mono = tkfont.Font(family=mono, size=12)
         self.font_mono_sm = tkfont.Font(family=mono, size=11)
         self.font_ui = tkfont.Font(family=ui, size=12)
@@ -867,6 +874,10 @@ class CetirimIDE(tk.Tk):
                             ("number", T["syn_number"]), ("comment", T["syn_comment"]),
                             ("function", T["syn_function"]), ("error", T["syn_error"])):
             self.editor.tag_configure(name, foreground=color)
+        # Weight and slant carry the same distinction the colours do, so the
+        # token classes stay apart for a reader who can't separate the hues.
+        self.editor.tag_configure("keyword", font=self.font_editor_bold)
+        self.editor.tag_configure("comment", font=self.font_editor_italic)
         self.editor.tag_configure("error", underline=True)
         self.editor.tag_configure("cursor_line", background=T["cursor_line"])
         self.editor.tag_configure("current_line", background=T["current_line"])
@@ -880,7 +891,10 @@ class CetirimIDE(tk.Tk):
 
     def change_font_size(self, delta):
         size = max(9, min(24, int(self.font_editor.cget("size")) + delta))
-        self.font_editor.configure(size=size)
+        # All three editor faces move together - the bold/italic tags would
+        # otherwise keep their old size and break the column alignment.
+        for font in (self.font_editor, self.font_editor_bold, self.font_editor_italic):
+            font.configure(size=size)
         self.refresh_line_numbers()
 
     def _scroll_both(self, first, last, scrollbar):
@@ -954,22 +968,66 @@ class CetirimIDE(tk.Tk):
         self.editor_tab.config(text=f"{name}  ●" if self.dirty else name,
                                foreground=THEME["fg_bright"] if self.dirty else THEME["fg"])
 
+    TYPE_KEYWORDS = {"int", "float", "char", "string", "bool", "void"}
+
     def highlight(self):
+        """Re-colour the buffer from a scan of it.
+
+        Everything here comes from the scanner - no regex over the text.
+        That is what keeps the classes from contradicting each other: a
+        regex for comments cannot tell `"http://x"` (a string) from a real
+        `//`, and a regex for call names matches `has (` inside a comment
+        and `print (` (a keyword) just as readily as a genuine call. Since
+        the scanner already decides all three questions to parse the file at
+        all, asking it is both cheaper and correct by construction, and the
+        tags no longer overlap - so which one wins no longer depends on the
+        order they were created in.
+        """
         src = self.source()
         for tag in ("keyword", "type", "string", "number", "comment", "function", "error"):
             self.editor.tag_remove(tag, "1.0", "end")
-        tokens, errors = Scanner(src).scan_all()
-        for tok in tokens:
-            if tok.ttype in (TT.EOF, TT.ERROR):
+
+        scanner = Scanner(src)
+        tokens, errors = scanner.scan_all()
+
+        for i, tok in enumerate(tokens):
+            if tok.ttype == TT.EOF:
                 continue
-            start, end = f"{tok.line}.{tok.col-1}", f"{tok.line}.{tok.col-1+len(tok.lexeme)}"
-            tag = "type" if tok.ttype == TT.KEYWORD and tok.lexeme in {"int","float","char","string","bool","void"} else "keyword" if tok.ttype == TT.KEYWORD else "string" if tok.ttype in (TT.STRING_LIT,TT.CHAR_LIT,TT.INTERP_STRING) else "number" if tok.ttype in (TT.INTEGER_LIT,TT.FLOAT_LIT,TT.BOOL_LIT) else None
+            # A quoted form's lexeme is escape-resolved, so its length is not
+            # its width on screen; the scanner stamps a real end for those.
+            if tok.end_line is not None:
+                end = f"{tok.end_line}.{tok.end_col - 1}"
+            else:
+                end = f"{tok.line}.{tok.col - 1 + len(tok.lexeme)}"
+            start = f"{tok.line}.{tok.col - 1}"
+
+            if tok.ttype == TT.ERROR:
+                # A literal still being typed: mark the whole run, rather
+                # than leaving it plain until it is closed.
+                self.editor.tag_add("error", start, end)
+                continue
+
+            if tok.ttype == TT.KEYWORD:
+                tag = "type" if tok.lexeme in self.TYPE_KEYWORDS else "keyword"
+            elif tok.ttype in (TT.STRING_LIT, TT.CHAR_LIT, TT.INTERP_STRING):
+                tag = "string"
+            elif tok.ttype in (TT.INTEGER_LIT, TT.FLOAT_LIT, TT.BOOL_LIT):
+                tag = "number"
+            elif tok.ttype == TT.IDENTIFIER and i + 1 < len(tokens) \
+                    and tokens[i + 1].ttype == TT.LPAREN:
+                # Adjacency, not proximity in the text: this tolerates a
+                # newline before the `(` and can never fire on a keyword or
+                # on words inside a comment or string, none of which reach
+                # here as an IDENTIFIER token.
+                tag = "function"
+            else:
+                tag = None
             if tag:
                 self.editor.tag_add(tag, start, end)
-        for match in re.finditer(r"//[^\n]*|/\*[\s\S]*?\*/", src):
-            self.editor.tag_add("comment", f"1.0+{match.start()}c", f"1.0+{match.end()}c")
-        for match in re.finditer(r"\b([A-Za-z_]\w*)\s*\(", src):
-            self.editor.tag_add("function", f"1.0+{match.start(1)}c", f"1.0+{match.end(1)}c")
+
+        for start_line, start_col, end_line, end_col in scanner.comments:
+            self.editor.tag_add("comment", f"{start_line}.{start_col - 1}",
+                                f"{end_line}.{end_col - 1}")
         for error in errors:
             self.editor.tag_add("error", f"{error.line}.{error.col-1}", f"{error.line}.{error.col}")
 
