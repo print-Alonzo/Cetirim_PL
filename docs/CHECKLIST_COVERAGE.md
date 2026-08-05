@@ -95,7 +95,10 @@ python interpreter.py tests/sem_arg_cardinality.src
 
 `tests/sem_multi_errors.src` contains five *different* mistakes — one of each
 kind in the table above — and the analyser reports all five in a single run
-rather than stopping at the first:
+rather than stopping at the first. `run_tests.py` asserts this, not just
+demonstrates it: that fixture's entry requires `[SEMANTIC ERROR]` to appear
+five times, so a regression that halted analysis at the first diagnostic
+would fail the suite. Run it directly to see all five:
 
 ```bash
 python interpreter.py tests/sem_multi_errors.src
@@ -205,5 +208,6 @@ python interpreter.py check5_io_heap.src < check5_io_heap.in
 python run_tests.py
 ```
 
-75 checks: 10 positive programs × (tokens, IR, output), 13 feature fixtures,
-23 negative fixtures, the optimizer report, and the `-O` differential re-runs.
+79 checks: 10 positive programs × (tokens, IR, output), 14 feature fixtures,
+24 negative fixtures, the optimizer report, and the `-O` differential re-runs
+(every positive and feature fixture, plus every exit-3 negative fixture).

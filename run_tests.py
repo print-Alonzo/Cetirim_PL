@@ -22,7 +22,10 @@ specific phase; the runner only checks that the right "[... ERROR]" tag
 appears and that the process exits with the declared code (2 for
 lex/syntax/semantic/IR errors, 3 for runtime errors) - it does not pin exact
 wording, so error-message copy can still be improved without breaking the
-suite.
+suite. A fixture may demand the tag more than once (an optional fourth
+tuple element, min_count): sem_multi_errors.src requires five, which is
+what actually pins error *recovery* - an analyser that stopped at the
+first diagnostic would still print the tag once and exit 2.
 
 Feature fixtures (FEATURE_FIXTURES, tests/<name>.src + tests/<name>_expected.txt):
 programs that exercise a specific language feature outside the five graded
@@ -87,13 +90,14 @@ NEGATIVE_FIXTURES = [
     ("tests/unequal_dims_oob.src", "[RUNTIME ERROR]", 3),
     # The five semantic errors the course rubric names explicitly, one
     # fixture each, plus a file combining them to show the analyser
-    # reports every error in a run rather than stopping at the first.
+    # reports every error in a run rather than stopping at the first -
+    # its min_count of 5 is what makes that recovery claim an assertion.
     ("tests/sem_undeclared_var.src", "[SEMANTIC ERROR]", 2),
     ("tests/sem_type_mismatch.src", "[SEMANTIC ERROR]", 2),
     ("tests/sem_redeclared_var.src", "[SEMANTIC ERROR]", 2),
     ("tests/sem_const_reassign.src", "[SEMANTIC ERROR]", 2),
     ("tests/sem_arg_cardinality.src", "[SEMANTIC ERROR]", 2),
-    ("tests/sem_multi_errors.src", "[SEMANTIC ERROR]", 2),
+    ("tests/sem_multi_errors.src", "[SEMANTIC ERROR]", 2, 5),
 ]
 
 FEATURE_FIXTURES = [
@@ -210,11 +214,12 @@ def check_positive(name, update):
     return ok
 
 
-def check_negative(path, tag, exit_code=2):
+def check_negative(path, tag, exit_code=2, min_count=1):
     result = run("interpreter.py", str(ROOT / path))
     combined = result.stdout + result.stderr
-    ok = tag in combined and result.returncode == exit_code
-    print(f"[{'PASS' if ok else 'FAIL'}] {path}: expected {tag!r} and exit {exit_code}, got exit {result.returncode}")
+    found = combined.count(tag)
+    ok = found >= min_count and result.returncode == exit_code
+    print(f"[{'PASS' if ok else 'FAIL'}] {path}: expected {tag!r} x{min_count} and exit {exit_code}, got x{found} and exit {result.returncode}")
     if not ok:
         print(combined)
     return ok
@@ -342,7 +347,7 @@ def main():
         print("Golden files updated.")
         return
 
-    results += [check_negative(path, tag, exit_code) for path, tag, exit_code in NEGATIVE_FIXTURES]
+    results += [check_negative(*fixture) for fixture in NEGATIVE_FIXTURES]
 
     for name in PROGRAMS:
         in_file = ROOT / f"{name}.in"
@@ -356,7 +361,7 @@ def main():
         ))
     results += [
         check_negative_optimized(path, tag, exit_code)
-        for path, tag, exit_code in NEGATIVE_FIXTURES if exit_code == 3
+        for path, tag, exit_code, *_ in NEGATIVE_FIXTURES if exit_code == 3
     ]
 
     passed, total = sum(results), len(results)
