@@ -146,9 +146,16 @@ GRAMMAR["declarator_name"] = Rule(_declarator_name_fn)
 def _build_struct_field_line(ps, c):
     """One field *line* can declare several fields at once sharing a type
     (`int x, y;`) - fan that out into one `Field` Node per declarator name,
-    each getting the (possibly array-wrapped) type via `merge_type`."""
+    each getting the (possibly array-wrapped) type via `merge_type`.
+
+    Position is stamped here rather than left to `_stamp_position`, which
+    only reaches a rule returning a *single* Node - this one returns a list,
+    so its Fields would otherwise keep `line = None`. Every field on the
+    line shares the position of the type that introduces them, which is
+    where the line starts."""
     return [
-        Node("Field", {"name": n["name"], "type": merge_type(c["field_type"], n)})
+        Node("Field", {"name": n["name"], "type": merge_type(c["field_type"], n)},
+             line=c["field_type"].line, col=c["field_type"].col)
         for n in c["names"]
     ]
 
@@ -1106,11 +1113,16 @@ def _try_stmt_fn(ps, committed):
         except Fail:
             ps.pos = save
             break
+        catch_kw = ps.tokens[save]
         Term(TT.LPAREN, msg="Expected '(' after catch").run(ps, True)
         catch_name = Term(TT.IDENTIFIER, msg="Expected catch variable").run(ps, True).lexeme
         Term(TT.RPAREN, msg="Expected ')' after catch variable").run(ps, True)
         catch_body = Ref("block", fail_msg="Expected '{' before block").run(ps, True)
-        catch_clauses.append(Node("CatchClause", {"name": catch_name, "body": catch_body}))
+        # Built inside this loop rather than returned from a rule of its own,
+        # so `_stamp_position` never sees it - position it from the `catch`
+        # keyword by hand.
+        catch_clauses.append(Node("CatchClause", {"name": catch_name, "body": catch_body},
+                                  line=catch_kw.line, col=catch_kw.col))
 
     finally_body = None
     save = ps.pos

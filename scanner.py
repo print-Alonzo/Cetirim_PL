@@ -90,7 +90,16 @@ class Token:
     a real `int`/`float`/`bool`/unescaped string, not source text the
     parser would have to re-parse). Every later phase (grammar.py's
     `_literal_value`, `_primary_fn`, ...) reads `attr` directly rather than
-    parsing `lexeme` a second time."""
+    parsing `lexeme` a second time.
+
+    `end_line`/`end_col` mark one past the token's last *source* character.
+    They are only stamped for the token kinds whose `lexeme` is not verbatim
+    source text - the quoted forms, whose escapes are already resolved in
+    `lexeme` (`"a\\tb"` is 6 source characters but a 5-character lexeme), so
+    `col + len(lexeme)` does not land on the real end. Every other token's
+    lexeme *is* its source text, and those leave both fields `None`; a
+    consumer that needs an end position (cetirim_ide.py's `highlight`) falls
+    back to the length arithmetic there."""
 
     ttype:  str
     lexeme: str
@@ -98,6 +107,8 @@ class Token:
     col:    int
     attr:   Optional[object] = None   # coerced value for literals
     parts:  Optional[list] = None     # INTERP_STRING only: see _scan_interp_string
+    end_line: Optional[int] = None    # quoted forms only: one past the last
+    end_col:  Optional[int] = None    # source character (see docstring)
 
     def __str__(self) -> str:
         attr_part = f"  [attr={self.attr!r}]" if self.attr is not None else ""
@@ -156,6 +167,14 @@ class Scanner:
         self.col     = 1
         self.tokens: List[Token]   = []
         self.errors: List[LexError] = []
+        # Comments are skipped, not tokenized, so their extent would
+        # otherwise be unrecoverable from the token list. Recording it
+        # costs nothing here and is what lets cetirim_ide.py colour
+        # comments from the scanner instead of guessing with a regex that
+        # cannot tell a `//` inside a string from one that starts a
+        # comment. Each entry is (start_line, start_col, end_line, end_col),
+        # 1-based like tokens, end exclusive.
+        self.comments: List[Tuple[int, int, int, int]] = []
 
     def _peek(self, offset: int = 0) -> str:
         """Look at the character `offset` positions ahead of `pos` without
@@ -206,7 +225,12 @@ class Scanner:
         `/* ... */` block comments before the next token. An unterminated
         block comment is reported (via `_add_error`) but scanning still
         continues from wherever it ran out of input, rather than treating
-        the rest of the file as "inside a comment forever"."""
+        the rest of the file as "inside a comment forever".
+
+        Every comment's extent is appended to `self.comments` as it is
+        skipped - including an unterminated block comment, whose span runs
+        to EOF (that is the shape an editor needs while the closing `*/` is
+        still being typed)."""
         while self.pos < len(self.source):
             ch = self._peek()
 
@@ -217,8 +241,10 @@ class Scanner:
 
             # Single-line comment
             if ch == "/" and self._peek(1) == "/":
+                sl, sc = self.line, self.col
                 while self.pos < len(self.source) and self._peek() != "\n":
                     self._advance()
+                self.comments.append((sl, sc, self.line, self.col))
                 continue
 
             # Multi-line comment
@@ -226,7 +252,13 @@ class Scanner:
                 sl, sc = self.line, self.col
                 self._advance(); self._advance()   # consume /*
                 closed = False
-                while self.pos < len(self.source) - 1:
+                # Bound on `len(self.source)`, not `len(self.source) - 1`:
+                # `_peek(1)` returns the "\0" sentinel past the end, so the
+                # `*/` test is still safe on the final character, and
+                # stopping one short of it used to leave that character
+                # unconsumed - an unterminated comment then leaked its last
+                # character out as a stray token.
+                while self.pos < len(self.source):
                     if self._peek() == "*" and self._peek(1) == "/":
                         self._advance(); self._advance()
                         closed = True
@@ -234,6 +266,7 @@ class Scanner:
                     self._advance()
                 if not closed:
                     self._add_error("Unterminated block comment", sl, sc)
+                self.comments.append((sl, sc, self.line, self.col))
                 continue
 
             break
@@ -315,7 +348,8 @@ class Scanner:
         self._advance()  # consume opening '
         if self.pos >= len(self.source):
             self._add_error("Unterminated character literal (EOF)", sl, sc)
-            return Token(TT.ERROR, "'", sl, sc)
+            return Token(TT.ERROR, "'", sl, sc,
+                         end_line=self.line, end_col=self.col)
 
         ch = self._peek()
         if ch == "\\":
@@ -323,7 +357,8 @@ class Scanner:
         elif ch == "'":
             self._add_error("Empty character literal", sl, sc)
             self._advance()
-            return Token(TT.ERROR, "''", sl, sc)
+            return Token(TT.ERROR, "''", sl, sc,
+                         end_line=self.line, end_col=self.col)
         else:
             val = ch
             self._advance()
@@ -335,7 +370,8 @@ class Scanner:
                 "Unterminated character literal (missing closing ')",
                 sl, sc, context=f"'{val}"
             )
-        return Token(TT.CHAR_LIT, f"'{val}'", sl, sc, val)
+        return Token(TT.CHAR_LIT, f"'{val}'", sl, sc, val,
+                     end_line=self.line, end_col=self.col)
 
     def _scan_escape_seq(self) -> str:
         """Consume a `\\x` escape sequence and return its decoded
@@ -382,7 +418,8 @@ class Scanner:
             if ch == '"':
                 self._advance()
                 lex = '"' + "".join(chars) + '"'
-                return Token(TT.STRING_LIT, lex, sl, sc, "".join(chars))
+                return Token(TT.STRING_LIT, lex, sl, sc, "".join(chars),
+                             end_line=self.line, end_col=self.col)
             if ch == "\n":
                 break
             if ch == "\\":
@@ -394,7 +431,8 @@ class Scanner:
             "Unterminated string literal (missing closing \")",
             sl, sc, context='"' + "".join(chars)
         )
-        return Token(TT.ERROR, '"' + "".join(chars), sl, sc)
+        return Token(TT.ERROR, '"' + "".join(chars), sl, sc,
+                     end_line=self.line, end_col=self.col)
 
     def _scan_interp_string(self) -> Token:
         """Scan `` `...` ``, identical in shape to `_scan_string_lit` but
@@ -446,7 +484,8 @@ class Scanner:
                 if lit_buf:
                     parts.append(("lit", "".join(lit_buf)))
                 text = "".join(chars)
-                tok = Token(TT.INTERP_STRING, "`" + text + "`", sl, sc, text)
+                tok = Token(TT.INTERP_STRING, "`" + text + "`", sl, sc, text,
+                            end_line=self.line, end_col=self.col)
                 tok.parts = parts
                 return tok
 
@@ -505,7 +544,8 @@ class Scanner:
             self._advance()
 
         self._add_error("Unterminated interpolated string (missing closing `)", sl, sc)
-        return Token(TT.ERROR, "`" + "".join(chars), sl, sc)
+        return Token(TT.ERROR, "`" + "".join(chars), sl, sc,
+                     end_line=self.line, end_col=self.col)
 
     def _scan_identifier(self) -> Token:
         """Scan a run of alphanumeric/underscore characters and classify
