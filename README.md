@@ -80,7 +80,9 @@ with `python-tk` installed (`brew install python-tk`), or a
 [python.org](https://www.python.org) build, both of which ship a modern Tk.
 Check with: `python3 -c "import tkinter; print(tkinter.TkVersion)"`.
 
-The IDE is connected to this project's scanner, parser, and interpreter. It provides syntax highlighting and lexical-error marking, Ctrl+Space templates / keyword autocomplete, a navigable code outline, rename refactoring (`Ctrl+R`), problem checking, integrated execution (`F5`), and adjustable editor font size. The Output tab behaves as an interactive terminal: when a program calls `input(...)`, type the requested value there and press Enter or **Send** — submitting an empty line simply re-prompts, the same as pressing Enter on an empty line at a real terminal.
+The IDE is connected to this project's scanner, parser, semantic analyzer, and interpreter, and is styled after modern editors (a VS Code-like dark theme): an activity rail, a collapsible **Outline** sidebar, a draggable sash between the editor and a bottom panel of flat uppercase tabs (**Output · Problems · Debug · Trace · Symbols · Optimizer**), an editor tab that shows a `●` unsaved marker, a breakpoint gutter with right-aligned line numbers (breakpoints are red dots), and a segmented status bar (file, run/debug state, cursor position). Fonts are chosen per platform (SF Mono/Menlo on macOS, Consolas/Cascadia Code on Windows), and on macOS the accelerators use `⌘` — `⌘S/⌘O/⌘N`, find/replace `⌘F`, rename `⌘R`, sidebar/panel toggles `⌘B`/`⌘J` (Ctrl on other platforms; Run/Debug/Check stay `F5`/`F6`/`F7`).
+
+It provides syntax highlighting and lexical-error marking, Ctrl+Space templates / keyword autocomplete, a navigable code outline, inline find/replace with match highlighting (Enter/Shift+Enter cycle matches, Esc closes), rename refactoring, and problem checking — the **Problems** tab lists lexical, syntax, *and* semantic diagnostics, color-coded ✖ error / ⚠ warning, double-click to jump to the offending line. The Output tab behaves as an interactive terminal: when a program calls `input(...)`, type the requested value there and press Enter or **Send** — submitting an empty line simply re-prompts, the same as pressing Enter on an empty line at a real terminal.
 
 ### Debugger
 
@@ -95,6 +97,10 @@ Breakpoints can be toggled even while a debug session is running.
 The **Debug** tab also has a **Watch** panel: type a variable name and click **Add** (or press Enter) to track it — its value refreshes every time execution pauses, showing `<not in scope>` if that variable isn't currently live. Double-click a watch entry to remove it.
 
 The **Trace** tab logs every source line executed during a debug session, in order, along with which function it ran in — a full execution history, not just the lines you stopped on. It's populated even while just using Continue, not only while stepping.
+
+### Symbol table
+
+The **Symbols** tab renders the semantic analyzer's symbol table for the current buffer: every function (its full signature, then each parameter and local with its declared type, `var`/`val` mutability, and the globally-unique `ir_name` the VM addresses it by — `semantics.py`'s flat-namespace scheme, made visible), every struct with its fields, typedefs with what they alias, and `const` globals. It refreshes when the tab is opened, when **⟳ Refresh** is pressed, or after any **✓ Check** (`F7`); it needs a program that passes semantic analysis (otherwise it points at the Problems tab instead of showing a stale table). Double-click a function to jump to its declaration. The Debug tab's **Call Stack** / **Variables** / **Watch** panels are the runtime complement — the same names carrying live values while execution is paused.
 
 ### Optimizer view
 
