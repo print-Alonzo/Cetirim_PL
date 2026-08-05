@@ -6,6 +6,7 @@ import re
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
+from collections import deque
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -44,6 +45,10 @@ TEMPLATES = {
 # splits any of them into the Problems table's three columns.
 DIAGNOSTIC = re.compile(r"^\[(?P<tag>[A-Z ]+)\]\s*(?:Line (?P<line>\d+), Col (?P<col>\d+):\s*)?(?P<message>.*)$",
                         re.S)
+
+# How many rows the Trace tab keeps, so a long-running loop can't grow it
+# unbounded. Bounds the worker's pending-row buffer as well as the widget.
+TRACE_LIMIT = 500
 
 # One place for every color in the IDE. All widget construction and every
 # ttk style reads from this dict - no hex literal may appear anywhere else
@@ -1674,9 +1679,43 @@ class CetirimIDE(tk.Tk):
             if live():
                 self.after(0, self.on_debug_pause, line)
 
+        # The trace feed is batched rather than posted per line. `on_line`
+        # fires at every statement boundary, so a Continue across a loop-heavy
+        # region would otherwise queue thousands of `after` callbacks - each
+        # doing its own insert and see("end") - and the UI would stay busy
+        # working through them long after the program itself had ended.
+        # Instead the worker buffers the rows and schedules a *single* drain;
+        # rows arriving while that drain is in flight schedule the next one,
+        # so at most one trace callback is ever pending.
+        pending_trace = deque(maxlen=TRACE_LIMIT)  # bounded like the widget itself
+        trace_scheduled = [False]
+
+        def drain_trace():
+            trace_scheduled[0] = False
+            if not live():
+                pending_trace.clear()
+                return
+            # Only this thread pops, and the worker's appends never shorten
+            # the buffer, so the loop can't race into an empty deque.
+            while pending_trace:
+                self.trace_list.insert("end", pending_trace.popleft())
+            self.trace_list.see("end")
+            overflow = self.trace_list.size() - TRACE_LIMIT
+            if overflow > 0:
+                self.trace_list.delete(0, overflow - 1)
+
         def on_line(line):
-            if live():
-                self.after(0, self.append_trace, line)
+            if not live():
+                return
+            # Resolved here, on the executor thread, where `call_names` still
+            # describes *this* boundary - the drain runs later, by which time
+            # a freely-running program has moved on to another frame.
+            executor = self.executor
+            function = executor.call_names[-1] if executor and executor.call_names else "(top level)"
+            pending_trace.append(f"{function}  —  line {line}")
+            if not trace_scheduled[0]:
+                trace_scheduled[0] = True
+                self.after(0, drain_trace)
 
         class TerminalWriter:
             def __init__(self, ide):
@@ -1726,17 +1765,6 @@ class CetirimIDE(tk.Tk):
         of them leaving that state retires all three."""
         for button in (self.step_btn, self.step_over_btn, self.continue_btn):
             button.config(state=state)
-
-    def append_trace(self, line):
-        executor = self.executor
-        if executor is None:
-            return
-        function = executor.call_names[-1] if executor.call_names else "(top level)"
-        self.trace_list.insert("end", f"{function}  —  line {line}")
-        self.trace_list.see("end")
-        overflow = self.trace_list.size() - 500  # cap the log so a long-running loop can't grow it unbounded
-        if overflow > 0:
-            self.trace_list.delete(0, overflow - 1)
 
     def refresh_debug_panels(self):
         executor = self.executor
@@ -1802,28 +1830,43 @@ class CetirimIDE(tk.Tk):
     def clear_current_line(self):
         self.editor.tag_remove("current_line", "1.0", "end")
 
+    def _paused_executor(self):
+        """The executor to hand a resume control to, or None when there is
+        nothing to resume. Holding an executor is not enough: the keyboard
+        shortcuts and the Tools menu reach these handlers even while the
+        transport buttons are greyed, and a run that is merely *in flight*
+        (or one already retired by a newer run, which `self.executor` still
+        points at until the worker swaps it) must ignore them rather than
+        repaint the UI as paused."""
+        executor = self.executor
+        return executor if executor is not None and executor.paused else None
+
     def debug_step(self):
         """Trace one line, entering any function it calls."""
-        if not self.executor:
+        executor = self._paused_executor()
+        if executor is None:
             return
         self._set_transport("disabled")
-        self.executor.dbg_step()
+        executor.dbg_step()
 
     def debug_step_over(self):
         """Trace one line, running any function it calls to completion
         rather than stopping inside it."""
-        if not self.executor:
+        executor = self._paused_executor()
+        if executor is None:
             return
         self._set_transport("disabled")
-        self.executor.dbg_step_over()
+        executor.dbg_step_over()
 
     def debug_continue(self):
-        if not self.executor:
+        """Resume until the next breakpoint, or until the program ends."""
+        executor = self._paused_executor()
+        if executor is None:
             return
         self.clear_current_line()
         self._set_transport("disabled")
         self.set_run_status("Running…", THEME["accent"])
-        self.executor.dbg_continue()
+        executor.dbg_continue()
 
     def debug_stop(self):
         if self.executor:

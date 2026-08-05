@@ -131,6 +131,17 @@ class IRExecutor:
         # `_should_step_pause` the two modes apart.
         self._step_depth = None
         self._step_line = None
+        # The call depth and source line the last pause resumed from, held
+        # until that statement finishes so a breakpoint on it can't fire a
+        # second time when a call it made returns into its remaining quads.
+        # See `_check_pause`.
+        self._resume_depth = None
+        self._resume_line = None
+        # True only while the executor thread is parked in `_check_pause`.
+        # The `dbg_*` resume controls are gated on it, so a resume arriving
+        # from another thread while the program is running freely can't
+        # leave a stale token in `_resume_event`.
+        self._paused = False
         self._stop_requested = False
         self._resume_event = threading.Event()
         # Every LABEL's quad index is resolved exactly once, up front, so
@@ -360,7 +371,9 @@ class IRExecutor:
 
         A breakpoint is checked independently of the stepping state, so a
         breakpoint inside a function being *stepped over* still pauses -
-        the same precedence every mainstream debugger uses."""
+        the same precedence every mainstream debugger uses. It is *not*
+        checked independently of the pause it just resumed from, though:
+        see `_suppresses_breakpoint`."""
         if self._stop_requested:
             raise DebugStopped()
         if line is None or line == self._prev_line:
@@ -368,15 +381,64 @@ class IRExecutor:
         self._prev_line = line
         if self.on_line is not None:
             self.on_line(line)
-        if self.on_pause is not None and (self._should_step_pause(line) or line in self.breakpoints):
+        # Evaluated at *every* boundary, not folded into the condition below:
+        # it retires itself, and short-circuiting past it on a line that isn't
+        # a breakpoint would leave the suppression armed to swallow a later,
+        # genuine hit on the resumed line.
+        suppressed = self._resumed_statement(line)
+        if self.on_pause is not None and (self._should_step_pause(line)
+                                          or (line in self.breakpoints and not suppressed)):
             self._stepping = False
             self._step_depth = None
             self._step_line = None
+            # Drop any token left by a resume that arrived while this run
+            # was *not* paused before announcing the pause - past this
+            # point a `dbg_*` call sees `_paused` and its `set()` counts.
+            self._resume_event.clear()
+            self._paused = True
             self.on_pause(line)
             self._resume_event.wait()
+            self._paused = False
             self._resume_event.clear()
+            # Every resume re-enters the tail of this same statement, so
+            # arm the suppression for all three controls, not just Continue.
+            self._resume_depth = len(self.call_stack)
+            self._resume_line = line
             if self._stop_requested:
                 raise DebugStopped()
+
+    def _resumed_statement(self, line):
+        """Whether this boundary is the tail of the statement the last pause
+        resumed from - the one case a breakpoint on it must not fire again.
+        Retires the suppression as a side effect once that statement is over,
+        so it can never outlive the statement it was armed for.
+
+        A call is rarely the whole statement: `int sx, sy = swap(x, y);`
+        lowers to PARAM/CALL quads plus the ASSIGN quads that store the
+        results, all carrying that one line. Returning from the callee
+        therefore re-enters the line as a fresh statement boundary, and an
+        unguarded breakpoint there stopped a second time on the very line the
+        user just continued from - which is what made Continue look like it
+        had done nothing. `_should_step_pause` already refuses that re-entry
+        for a step-over; this is the same refusal for a breakpoint.
+
+        Depth is what keeps a *recursive* call honest: a breakpoint on
+        `return n * fact(n - 1);` still fires for each deeper invocation,
+        because those are genuinely new hits rather than the resumed
+        statement finishing up. Coming back shallower retires the
+        suppression, so an exception unwinding past the frame that paused
+        can't carry it along either."""
+        if self._resume_depth is None:
+            return False
+        if len(self.call_stack) > self._resume_depth:
+            return False  # inside a call this statement made: not its tail
+        if line == self._resume_line:
+            return True
+        # Another line in that frame (or a shallower one): the statement the
+        # suppression was armed for is done with.
+        self._resume_depth = None
+        self._resume_line = None
+        return False
 
     def _should_step_pause(self, line):
         """Whether the in-flight step (if any) is satisfied by this statement
@@ -399,11 +461,21 @@ class IRExecutor:
             return True
         return len(self.call_stack) <= self._step_depth and line != self._step_line
 
+    @property
+    def paused(self):
+        """Whether the run is currently parked in `_check_pause`, waiting for
+        one of the `dbg_*` resume controls. The three resume controls are the
+        only meaningful actions in that state, so a UI can gate them on this
+        rather than on merely holding an executor."""
+        return self._paused
+
     def dbg_step(self):
         """Resume a paused run for exactly one more source line, then pause
         again - descending into a callee if this line calls one. Safe to
         call from another thread while this executor's thread is blocked in
-        `_check_pause`."""
+        `_check_pause`; a no-op when the run isn't paused (see `paused`)."""
+        if not self._paused:
+            return
         self._stepping = True
         self._step_depth = None
         self._step_line = None
@@ -413,8 +485,11 @@ class IRExecutor:
         """Resume a paused run for one more source line *in the current
         frame*, running any function this line calls to completion instead
         of pausing inside it. Same threading contract as `dbg_step`: the
-        executor thread is parked in `_check_pause`, so `call_stack` and
-        `_prev_line` are stable to read from the caller's thread here."""
+        `paused` check is what makes reading `call_stack` and `_prev_line`
+        from the caller's thread safe here - the executor thread is parked
+        in `_check_pause`, so neither can move under us."""
+        if not self._paused:
+            return
         self._stepping = True
         self._step_depth = len(self.call_stack)
         self._step_line = self._prev_line
@@ -422,7 +497,14 @@ class IRExecutor:
 
     def dbg_continue(self):
         """Resume a paused run until the next breakpoint (or the program
-        ends)."""
+        ends). A no-op when the run isn't paused: without that check a
+        Continue arriving mid-run (the keyboard shortcut and menu item reach
+        this even while the transport buttons are greyed) would leave a token
+        in `_resume_event` that makes the *next* breakpoint fall straight
+        through its `wait()`, so the UI would report a pause the executor
+        never actually took."""
+        if not self._paused:
+            return
         self._stepping = False
         self._step_depth = None
         self._step_line = None
