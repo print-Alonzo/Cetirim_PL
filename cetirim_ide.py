@@ -14,16 +14,18 @@ from scanner import KEYWORDS, Scanner, TT
 
 SAMPLE = '''// Welcome to the Cetirim Language IDE
 // Ctrl+Space opens templates and keyword autocomplete.
-
-int greet(string name) {
-    print("Hello, ", name);
-    return 0;
-}
+// F5 runs the program in the terminal below.
 
 void main() {
-    var int score = 42;
-    greet("Cetirim");
-    return 0;
+    var string name;
+    print("What is your name?");
+    input(name);
+    print(`Welcome, {name}!`);
+}
+'''
+
+NEW_FILE = '''void main() {
+    // Write your code here.
 }
 '''
 TEMPLATES = {
@@ -271,9 +273,8 @@ class CetirimIDE(tk.Tk):
         threading.Thread(target=execute, daemon=True).start()
 
     def activate_terminal_input(self, request):
-        names = ", ".join(request["names"])
-        label = "value" if len(request["names"]) == 1 else "values (space-separated)"
-        self.write_console(f"\n{label} for {names}: ")
+        # The terminal cursor is sufficient context; avoid exposing internal
+        # IR-qualified variable names such as `main.a` to the user.
         self.terminal_entry.config(state="normal")
         self.terminal_send.config(state="normal")
         self.terminal_entry.delete(0, "end")
@@ -299,7 +300,9 @@ class CetirimIDE(tk.Tk):
     def write_console(self, message): self.console.config(state="normal"); self.console.insert("end", message); self.console.see("end"); self.console.config(state="disabled")
     def new_file(self):
         if self.dirty and not messagebox.askyesno("New file", "Discard unsaved changes?", parent=self): return
-        self.editor.delete("1.0", "end"); self.file_path=None; self.dirty=False; self._refresh_all()
+        self.editor.delete("1.0", "end"); self.editor.insert("1.0", NEW_FILE)
+        self.editor.mark_set("insert", "2.4")
+        self.file_path=None; self.dirty=False; self._refresh_all()
     def open_file(self):
         path = filedialog.askopenfilename(filetypes=[("Cetirim source", "*.src"), ("All files", "*.*")])
         if path: self.editor.delete("1.0", "end"); self.editor.insert("1.0", Path(path).read_text(encoding="utf-8")); self.file_path=Path(path); self.dirty=False; self._refresh_all()
