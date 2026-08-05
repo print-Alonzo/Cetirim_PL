@@ -48,6 +48,7 @@ class CetirimIDE(tk.Tk):
         self.pending_input = None
         self.breakpoints = set()
         self.executor = None
+        self.run_serial = 0  # bumped per run; stale worker threads compare against it and go inert
         self.watches = []
         self._apply_theme()
         self._build_ui()
@@ -345,45 +346,58 @@ class CetirimIDE(tk.Tk):
     def run_program(self, debug=False):
         if not self.check_code(): return
         from ir import generate
-        from interpreter import IRExecutor
+        from interpreter import DebugStopped, IRExecutor
         from semantics import analyze
         ast, _, _ = parse_source(self.source())
         symtab, semantic_errors = analyze(ast)
         if any(error.severity == "ERROR" for error in semantic_errors):
             self.write_console("Semantic errors:\n" + "\n".join(str(error) for error in semantic_errors) + "\n")
             return
+        # Retire any still-live previous run first: bump the serial (its
+        # callbacks all check it and go inert), tell its executor to stop,
+        # and unblock it if it's sitting in an input() wait.
+        self.run_serial += 1; serial = self.run_serial
+        if self.executor is not None: self.executor.dbg_stop()
+        self._abort_pending_input()
         self.console.config(state="normal"); self.console.delete("1.0", "end"); self.console.config(state="disabled")
         self.clear_current_line(); self.callstack_list.delete(0, "end"); self.vars_list.delete(0, "end"); self.trace_list.delete(0, "end")
         self.write_console("$ Debugging program…\n" if debug else "$ Running program…\n")
-        if debug: self.stop_btn.config(state="normal")
+        self.stop_btn.config(state="normal")
+        def live(): return serial == self.run_serial
         def request_input(names):
+            if not live(): raise DebugStopped()
             request = {"names": names, "value": None, "event": threading.Event()}
             self.pending_input = request
             self.after(0, self.activate_terminal_input, request)
             request["event"].wait()
-            return request["value"]
+            if not live(): raise DebugStopped()
+            # readline()'s contract: a line always ends in "\n", so an empty
+            # submit re-prompts (splits to no tokens) instead of reading as EOF.
+            return request["value"] + "\n"
         def on_pause(line):
-            self.after(0, self.on_debug_pause, line)
+            if live(): self.after(0, self.on_debug_pause, line)
         def on_line(line):
-            self.after(0, self.append_trace, line)
+            if live(): self.after(0, self.append_trace, line)
         class TerminalWriter:
             def __init__(self, ide): self.ide = ide
             def write(self, text):
-                if text: self.ide.after(0, self.ide.write_console, text)
+                if text and live(): self.ide.after(0, self.ide.write_console, text)
                 return len(text)
             def flush(self): pass
         def execute():
             try:
                 with contextlib.redirect_stdout(TerminalWriter(self)):
                     quads, functions, types, structs = generate(ast, symtab)
-                    self.executor = IRExecutor(quads, functions, types, structs, input_provider=request_input,
-                                                breakpoints=self.breakpoints if debug else None,
-                                                on_pause=on_pause if debug else None,
-                                                on_line=on_line if debug else None)
-                    self.executor.run()
-                self.after(0, self.finish_execution, "\n$ Program finished.\n")
+                    executor = IRExecutor(quads, functions, types, structs, input_provider=request_input,
+                                          breakpoints=self.breakpoints if debug else None,
+                                          on_pause=on_pause if debug else None,
+                                          on_line=on_line if debug else None)
+                    self.executor = executor
+                    executor.run()
+                message = "\n$ Program stopped.\n" if executor._stop_requested else "\n$ Program finished.\n"
+                if live(): self.after(0, self.finish_execution, message)
             except Exception as exc:
-                self.after(0, self.finish_execution, f"\nRuntime error: {exc}\n")
+                if live(): self.after(0, self.finish_execution, f"\nRuntime error: {exc}\n")
         threading.Thread(target=execute, daemon=True).start()
 
     def debug_program(self): self.run_program(debug=True)
@@ -406,7 +420,7 @@ class CetirimIDE(tk.Tk):
     def refresh_debug_panels(self):
         executor = self.executor
         self.callstack_list.delete(0, "end")
-        for name in reversed(executor.call_names) or ["(top level)"]:
+        for name in (list(reversed(executor.call_names)) or ["(top level)"]):
             self.callstack_list.insert("end", name)
         self.vars_list.delete(0, "end")
         self.vars_list.insert("end", "-- Locals --")
@@ -465,7 +479,20 @@ class CetirimIDE(tk.Tk):
         self.step_btn.config(state="disabled"); self.continue_btn.config(state="disabled")
         self.executor.dbg_continue()
     def debug_stop(self):
-        if self.executor: self.executor.dbg_stop()
+        if self.executor:
+            self.executor.dbg_stop()
+            self._abort_pending_input()
+
+    def _abort_pending_input(self):
+        """Wake a worker blocked in `request_input` by resolving its pending
+        request with an empty line (it then notices the stop request or the
+        stale serial and unwinds via DebugStopped), and idle the terminal."""
+        request, self.pending_input = self.pending_input, None
+        if request is not None:
+            request["value"] = ""
+            request["event"].set()
+        self.terminal_entry.config(state="disabled")
+        self.terminal_send.config(state="disabled")
 
     def activate_terminal_input(self, request):
         # The terminal cursor is sufficient context; avoid exposing internal
