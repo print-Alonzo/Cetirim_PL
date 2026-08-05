@@ -166,7 +166,7 @@ class IRExecutor:
                     self._runtime_error(f"Exceeded maximum step count ({self.max_steps}) - possible infinite loop")
                 steps += 1
                 q = self.quads[self.pc]
-                if self.on_pause is not None or self.on_line is not None:
+                if self.on_pause is not None or self.on_line is not None or self._stop_requested:
                     self._check_pause(q.line)
                 if self.trace:
                     print(f"{self.pc:04d}: {q}", file=sys.stderr)
@@ -346,9 +346,12 @@ class IRExecutor:
         (`on_pause`) only ever happens at that same statement-boundary
         granularity, since one source line can lower to several quads and a
         debugger should show one stop per line, not per quad. Also doubles
-        as the Stop control's check point, so a program stuck in a
-        breakpoint-free loop still notices a stop request promptly (once per
-        line, not once per quad, but that's frequent enough in practice)."""
+        as the Stop control's check point: `run()`'s loop calls this for
+        every quad once `_stop_requested` is set even when no debugger is
+        attached (the `or self._stop_requested` arm of its guard), so a
+        stop request lands within one quad in any mode - and
+        `_next_input_token` has its own check, so a run blocked waiting for
+        input stops as soon as the input provider returns."""
         if self._stop_requested:
             raise DebugStopped()
         if line is None or line == self._prev_line:
@@ -559,6 +562,8 @@ class IRExecutor:
         call = one line", it just keeps consuming from one continuous
         stream of whitespace-separated tokens."""
         while not self._input_buffer:
+            if self._stop_requested:  # a Stop that arrived while blocked in the provider
+                raise DebugStopped()
             raw = self.input_provider(names or []) if self.input_provider else sys.stdin.readline()
             if raw is None:
                 raw = ""
