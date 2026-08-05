@@ -80,7 +80,7 @@ with `python-tk` installed (`brew install python-tk`), or a
 [python.org](https://www.python.org) build, both of which ship a modern Tk.
 Check with: `python3 -c "import tkinter; print(tkinter.TkVersion)"`.
 
-The IDE is connected to this project's scanner, parser, and interpreter. It provides syntax highlighting and lexical-error marking, Ctrl+Space templates / keyword autocomplete, a navigable code outline, rename refactoring (`Ctrl+R`), problem checking, integrated execution (`F5`), and adjustable editor font size. The Output tab behaves as an interactive terminal: when a program calls `input(...)`, type the requested value there and press Enter or **Send**.
+The IDE is connected to this project's scanner, parser, and interpreter. It provides syntax highlighting and lexical-error marking, Ctrl+Space templates / keyword autocomplete, a navigable code outline, rename refactoring (`Ctrl+R`), problem checking, integrated execution (`F5`), and adjustable editor font size. The Output tab behaves as an interactive terminal: when a program calls `input(...)`, type the requested value there and press Enter or **Send** — submitting an empty line simply re-prompts, the same as pressing Enter on an empty line at a real terminal.
 
 ### Debugger
 
@@ -88,7 +88,7 @@ Click a line number in the gutter to toggle a breakpoint on that line. Press **D
 
 - **Step ⏵** — run just the next source line, then pause again.
 - **Continue ⏭** — resume running until the next breakpoint (or the program ends).
-- **Stop ⏹** — abort the debug session.
+- **Stop ⏹** — abort the run. Works during a plain **Run** as well as a debug session, and takes effect even when the program is blocked at an `input(...)` prompt or spinning in a loop with no breakpoints. Starting a new Run/Debug also stops any still-running previous one automatically.
 
 Breakpoints can be toggled even while a debug session is running.
 
