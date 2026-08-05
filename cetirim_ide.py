@@ -109,49 +109,9 @@ def hairline(parent, side="top", **pack_options):
     return bar
 
 
-def type_text(node):
-    """Spell an AST type node the way the source spells it, for an outline
-    label: `int`, `struct Point`, `int[3]`, `(int, int)`.
-
-    Deliberately independent of `semantics.type_name` (which the Symbols tab
-    uses): that one renders *resolved* types and needs a `SymbolTable`, while
-    the outline runs on a bare parse of a buffer that may not even analyze
-    cleanly yet.
-    """
-    if node is None:
-        return ""
-    if node.kind == "Type":
-        return node.fields["name"]
-    if node.kind in ("StructType", "StructDef"):
-        return f"struct {node.fields['name']}"
-    if node.kind == "TupleType":
-        return "(" + ", ".join(type_text(e) for e in node.fields["elements"]) + ")"
-    if node.kind == "ArrayType":
-        size = node.fields["size"]
-        if size is None:
-            inner = ""
-        elif size.kind == "Literal":
-            inner = str(size.fields["lexeme"])
-        elif size.kind == "Identifier":
-            inner = size.fields["name"]
-        else:
-            inner = "…"          # a computed size - the shape is what matters
-        return f"{type_text(node.fields['base'])}[{inner}]"
-    return node.kind
-
-
-def signature_text(fn):
-    """`main(): void` / `add(int, int): int` - a function's outline label.
-    Parameter *types* only: names would push the useful part (the return
-    type) off the end of a narrow sidebar."""
-    params = ", ".join(type_text(p.fields["type"]) for p in fn.fields["params"])
-    return f"{fn.fields['name']}({params}): {type_text(fn.fields['return_type'])}"
-
-
 def collect_locals(node, out):
-    """Walk a function body and append `(line, name, type)` for every local
-    binding it introduces. `type` is `""` where the source declares none
-    (a `let`, a `for`-in variable).
+    """Walk a `FunctionDecl` and append `(line, name)` for every name local
+    to it, in source order.
 
     The walk is generic - it recurses through every Node/list field rather
     than enumerating the statement kinds that can hold a block - so a
@@ -159,13 +119,13 @@ def collect_locals(node, out):
     without this needing to know the statement vocabulary, and a new
     block-bearing statement in grammar.py needs no change here.
 
-    The four binding forms, each keyed off the node kind that introduces it:
-    `VarDecl` (`var`/`val`, one entry per declarator, each with its own
-    line), `LetDecl` (no declared type to show, `None` names are `_`
-    discards), `MultiAssign` (typed multi-assign declares ordinary locals
-    too), and the loop/catch variables of `ForInStmt`/`CatchClause`.
-    Parameters are not locals and are already shown in the function's own
-    signature label.
+    Six binding forms, each keyed off the node kind that introduces it:
+    `Param` (a parameter is as local to the function as anything it
+    declares), `VarDecl` (`var`/`val`, one entry per declarator, each with
+    its own line), `LetDecl` (`None` names are `_` discards, which bind
+    nothing), `MultiAssign` (typed multi-assign declares ordinary locals
+    too, and discards the same way), and the loop/catch variables of
+    `ForInStmt`/`CatchClause`.
     """
     if isinstance(node, list):
         for item in node:
@@ -174,21 +134,21 @@ def collect_locals(node, out):
     if not isinstance(node, Node):
         return
 
-    if node.kind == "VarDecl":
+    if node.kind == "Param":
+        out.append((node.line, node.fields["name"]))
+    elif node.kind == "VarDecl":
         for d in node.fields["declarators"]:
-            out.append((d.line or node.line, d.fields["name"], type_text(d.fields["type"])))
+            out.append((d.line or node.line, d.fields["name"]))
     elif node.kind == "LetDecl":
         for name in node.fields["names"]:
             if name is not None:
-                out.append((node.line, name, ""))
+                out.append((node.line, name))
     elif node.kind == "MultiAssign":
         for lvalue in node.fields["lvalues"]:
             if lvalue["name"] is not None:
-                out.append((node.line, lvalue["name"], type_text(lvalue["type"])))
-    elif node.kind == "ForInStmt":
-        out.append((node.line, node.fields["name"], ""))
-    elif node.kind == "CatchClause":
-        out.append((node.line, node.fields["name"], "string"))
+                out.append((node.line, lvalue["name"]))
+    elif node.kind in ("ForInStmt", "CatchClause"):
+        out.append((node.line, node.fields["name"]))
 
     for value in node.fields.values():
         collect_locals(value, out)
@@ -516,9 +476,7 @@ class CetirimIDE(tk.Tk):
             height = self.vsplit.winfo_height()
             if height > 500:
                 self.vsplit.sashpos(0, height - 280)
-            # 220 fit the old name-only outline; rows now carry a type or a
-            # signature too, so they start out readable rather than clipped.
-            self.hsplit.sashpos(0, 280)
+            self.hsplit.sashpos(0, 220)
         except tk.TclError:
             pass
 
@@ -1036,8 +994,11 @@ class CetirimIDE(tk.Tk):
         self.breakpoints.symmetric_difference_update({line})
         self.refresh_line_numbers()
 
-    OUTLINE_GLYPHS = {"function": "ƒ", "struct": "◆", "typedef": "≡",
-                      "const": "◇", "field": "◦", "variable": "•"}
+    # Diamonds are types (filled defines one, hollow only aliases one),
+    # squares are storage, and ƒ is a function. Nothing here is a round dot:
+    # a list of bullets reads as prose, not as a symbol tree.
+    OUTLINE_GLYPHS = {"function": "ƒ", "struct": "◆", "typedef": "◇",
+                      "const": "▣", "field": "▪", "variable": "▫"}
 
     def refresh_outline(self):
         """Rebuild the sidebar tree from a real parse of the buffer.
@@ -1087,7 +1048,6 @@ class CetirimIDE(tk.Tk):
             if decl.kind == "VarDecl":          # only `const` reaches global scope
                 for d in decl.fields["declarators"]:
                     self._outline_row(open_state, "", "const", d.fields["name"],
-                                      f"{d.fields['name']}: {type_text(d.fields['type'])}",
                                       d.line or decl.line)
             elif decl.kind == "StructDecl":
                 self._outline_struct(open_state, decl.fields["name"], decl.fields["fields"], decl.line)
@@ -1098,16 +1058,17 @@ class CetirimIDE(tk.Tk):
                     # and aliases it, so it earns a row of each.
                     self._outline_struct(open_state, aliased.fields["name"],
                                          aliased.fields["fields"], aliased.line or decl.line)
-                self._outline_row(open_state, "", "typedef", decl.fields["name"],
-                                  f"{decl.fields['name']}: {type_text(aliased)}", decl.line)
+                self._outline_row(open_state, "", "typedef", decl.fields["name"], decl.line)
             elif decl.kind == "FunctionDecl":
-                parent = self._outline_row(open_state, "", "function", decl.fields["name"],
-                                           signature_text(decl), decl.line)
+                parent = self._outline_row(open_state, "", "function",
+                                           decl.fields["name"], decl.line)
+                # The whole declaration, not just the body: parameters are
+                # local to the function too, and sort ahead of its own
+                # declarations by virtue of being on the signature's line.
                 locals_found = []
-                collect_locals(decl.fields["body"], locals_found)
-                for line, name, typed in sorted(locals_found, key=lambda item: item[0] or 0):
-                    self._outline_row(open_state, parent, "variable", name,
-                                      f"{name}: {typed}" if typed else name, line)
+                collect_locals(decl, locals_found)
+                for line, name in sorted(locals_found, key=lambda item: item[0] or 0):
+                    self._outline_row(open_state, parent, "variable", name, line)
 
         self.outline.yview_moveto(top)
 
@@ -1117,25 +1078,28 @@ class CetirimIDE(tk.Tk):
             yield from self._outline_ids(iid)
 
     def _outline_struct(self, open_state, name, fields, line):
-        parent = self._outline_row(open_state, "", "struct", name, name, line)
+        parent = self._outline_row(open_state, "", "struct", name, line)
         for f in fields:
-            self._outline_row(open_state, parent, "field", f.fields["name"],
-                              f"{f.fields['name']}: {type_text(f.fields['type'])}",
-                              f.line or line)
+            self._outline_row(open_state, parent, "field", f.fields["name"], f.line or line)
 
-    def _outline_row(self, open_state, parent, kind, key, label, line):
+    def _outline_row(self, open_state, parent, kind, name, line):
         """Insert one row under `parent`, restoring its previous open state.
 
-        `key` is the row's *name*, not its position, so the id survives edits
-        elsewhere in the file; a `#n` suffix disambiguates the genuine
-        duplicates (a local shadowed in a nested block, two same-named
+        Rows are labelled with the bare name - a declaration's *type* is the
+        Symbols tab's job (it renders resolved types via `semantics.type_name`,
+        which needs a `SymbolTable` this doesn't have), and spelling it here
+        only competes with the name for a narrow sidebar's width.
+
+        The item id is keyed by that name rather than by position, so it
+        survives edits elsewhere in the file; a `#n` suffix disambiguates the
+        genuine duplicates (a local shadowed in a nested block, two same-named
         declarations in a broken buffer)."""
-        iid = f"{parent}/{kind}:{key}"
+        iid = f"{parent}/{kind}:{name}"
         self._outline_seen[iid] = self._outline_seen.get(iid, 0) + 1
         if self._outline_seen[iid] > 1:
             iid = f"{iid}#{self._outline_seen[iid]}"
         return self.outline.insert(parent, "end", iid=iid,
-                                   text=f" {self.OUTLINE_GLYPHS[kind]}  {label}",
+                                   text=f" {self.OUTLINE_GLYPHS[kind]}  {name}",
                                    values=(line or 1,), tags=(kind,),
                                    open=open_state.get(iid, True))
 

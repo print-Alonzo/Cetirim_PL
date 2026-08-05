@@ -381,7 +381,7 @@ def driver():
           any("Point" in r for r in outline_rows()) and any("main" in r for r in outline_rows()),
           repr(outline_rows()))
     check("struct fields nest under the struct",
-          any("x: int" in r for r in outline_child_rows("Point")),
+          [r.split()[-1] for r in outline_child_rows("Point")] == ["x"],
           repr(outline_child_rows("Point")))
 
     # An inline `typedef struct C {...} R;` used to be split by the outline's
@@ -389,29 +389,31 @@ def driver():
     # produce a struct row (with its fields) plus the alias, and nothing else.
     load("const int LIMIT = 5;\n"
          "typedef struct Color { int r; int g; int b; } RGB;\n"
+         "int scale(int base, int factor) {\n"
+         "    return base * factor;\n"
+         "}\n"
          "void main() {\n"
          "    var int count;\n"
          "    let total = 0;\n"
-         "    print(count, total);\n"
+         "    print(count, total, scale(2, 3));\n"
          "}\n")
     tops = [r.strip() for r in outline_rows()]
     check("inline typedef-struct yields a struct row and an alias row, not a field",
-          tops == ["◇  LIMIT: int", "◆  Color", "≡  RGB: struct Color", "ƒ  main(): void"],
-          repr(tops))
-    check("outline lists global constants",
-          any("LIMIT: int" in r for r in tops), repr(tops))
+          tops == ["▣  LIMIT", "◆  Color", "◇  RGB", "ƒ  scale", "ƒ  main"], repr(tops))
     check("struct fields of an inline typedef nest under it",
-          [r.split()[1] for r in outline_child_rows("Color")] == ["r:", "g:", "b:"],
+          [r.split()[-1] for r in outline_child_rows("Color")] == ["r", "g", "b"],
           repr(outline_child_rows("Color")))
     check("function locals nest under the function",
-          any("count: int" in r for r in outline_child_rows("main"))
-          and any("total" in r for r in outline_child_rows("main")),
+          [r.split()[-1] for r in outline_child_rows("main")] == ["count", "total"],
           repr(outline_child_rows("main")))
+    check("parameters are listed as locals of their function",
+          [r.split()[-1] for r in outline_child_rows("scale")] == ["base", "factor"],
+          repr(outline_child_rows("scale")))
     check("outline navigates to a nested row's own line",
           ide.outline.item(
               [i for i in ide.outline.get_children(
                   [c for c in ide.outline.get_children("") if "main" in ide.outline.item(c, "text")][0])
-               if "count" in ide.outline.item(i, "text")][0], "values")[0] in (4, "4"),
+               if "count" in ide.outline.item(i, "text")][0], "values")[0] in (7, "7"),
           "expected the 'var int count;' line")
 
     # A buffer that recovers to nothing must not blank the tree.
