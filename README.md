@@ -616,6 +616,30 @@ stdin fixture: `python interpreter.py prog1_calculator.src <
 prog1_calculator.in`. `prog3`–`prog5` don't read input and can be run
 directly.
 
+### Checklist-coverage set
+
+A second set of programs is organized against the course grading checklist
+(`docs/CSC617M_Machine_Problem_Checklist_Rubric.pdf`), one program per group of
+rows, so no graded construct has to be spotted inside a larger program:
+
+| File | Checklist rows |
+|---|---|
+| `check1_declarations.src` | Headers/Comments, Variable Declaration, Arrays, Structures/Records, Constant Declaration, Assignment |
+| `check2_expressions.src` | Math Expr (simple, complex), Boolean Expr (simple, complex, complex logical) — laid out as the rubric's own `(a)`–`(e)` expression hierarchy |
+| `check3_control_flow.src` | If Stmt, Loops (`while`, all three `for` forms, `repeat-until`), Nested Statements |
+| `check4_functions.src` | Functions: Declare, Call, Recursion (direct, tree, mutual) |
+| `check5_io_heap.src` | Input Stmt, Output Stmt, Heap Simulation (reference vs. value semantics) |
+
+`check5` reads input, so run it as `python interpreter.py check5_io_heap.src <
+check5_io_heap.in`. All five are registered as positive fixtures in
+`run_tests.py`, so their token stream, IR, and output are all diffed against
+committed goldens.
+
+**[`docs/CHECKLIST_COVERAGE.md`](docs/CHECKLIST_COVERAGE.md)** maps every
+checklist row to the program that demonstrates it, including the five named
+semantic errors and an honest note on the two rows the language does not
+implement.
+
 ---
 
 ## Speed

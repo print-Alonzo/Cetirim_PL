@@ -1,0 +1,50 @@
+operands:  x = 10  y = 20  z32 = 30
+           arr = {10, 20, 30, 40, 50}  pt = ( 3 , 4 )
+           BASE = 34  SCALE = 234
+
+---- (a) simple math ----
+z32 + 7   = 37
+z32 * y   = 600
+9.0 / 2.0 = 4.5
+z32 - 3   = 27
+17 % 5    = 2
+7 / 2     = 3 (int division truncates; use 7 / 2.0 for 3.5)
+unary minus and plus: -10 10
+
+---- (b) complex math ----
+func1(23,4,5) + BASE / SCALE * z32 = 43
+   func1(23,4,5) = 43 and BASE / SCALE = 0 (integer division -> 0)
+func1(2,3,4) + arr[2] * pt.x - weight(arr[0]) / 2 = 94
+((sm1 + sm3) * 2 - arr[1]) / (pt.y + 1) = 21
+(x + y) * 1.0 / (z32 - 5) + 3.0 = 4.2
+BASE / 8.0 * 2.0 = 8.5 (a float operand keeps the fraction)
+func1(arr[1] / 4, pt.y, weight(pt.x)) = 33
+
+---- (c) simple boolean ----
+z32 < 100   = true
+z32 > 5     = true
+z32 <= 30   = true
+z32 >= 31   = false
+z32 == 30   = true
+z32 != 31   = true
+!(z32 == 31) = true
+(func1(1,2,3) + arr[1] * 2) > (weight(pt.x) - BASE / 4) = true
+
+---- (d) complex boolean ----
+(x > 5) && (y < 100)               = true
+(x > 5) || (y < 0)                 = true
+(x >= 10) && (y == 20) && (z32 != 0) = true
+
+---- (e) complex logical ----
+((func1(1,2,3) + arr[0] > pt.x * 2) && !(y % 3 == 0)) || (z32 <= 30 && !(x > 1000)) = true
+(arr[4] - 50 > 0 && !(pt.y >= 4)) || (!(z32 == 30) && sm4 != 2) = false
+!((x + y < z32) || (weight(pt.y) % 2 == 0)) && (arr[3] / 4 == 10) = true
+
+---- short-circuit evaluation ----
+false && noisy(true):
+   result false - noisy() stayed silent, so it never ran
+true || noisy(true):
+   result true - again skipped
+true && noisy(false):
+      [noisy() actually ran]
+   result false - here the right operand had to be evaluated

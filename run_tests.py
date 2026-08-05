@@ -4,10 +4,14 @@ interpreter pipeline.
     python run_tests.py            run every check, report pass/fail
     python run_tests.py --update   regenerate the golden files from current output
 
-Positive fixtures (prog1..prog5): each program's scanner token stream,
-compiled quadruple listing, and executed output are diffed against the
-committed goldens (progN_tokens.txt, progN_ir.txt, progN_expected.txt).
-Programs that call input() read from progN.in. The token stream's "Scan
+Positive fixtures (prog1..prog5, plus the check1..check5 checklist-coverage
+set): each program's scanner token stream, compiled quadruple listing, and
+executed output are diffed against the committed goldens (<name>_tokens.txt,
+<name>_ir.txt, <name>_expected.txt). Programs that call input() read from
+<name>.in. Diffing all three per program is what pins the rubric's three
+grading columns at once - the token stream covers the scanner, the quad
+listing covers the parser and semantic analyser, and the output covers the
+interpreter. The token stream's "Scan
 time" line is a live per-run timing measurement, not scanner output, so
 it's stripped from both sides before comparing (but --update still writes
 whatever timing that regeneration run happened to see, same as the
@@ -51,6 +55,15 @@ PROGRAMS = [
     "prog3_functions",
     "prog4_structs_match_exceptions",
     "prog5_advanced",
+    # The checklist-coverage set: one program per group of rows in the
+    # course rubric (docs/CSC617M_Machine_Problem_Checklist_Rubric.pdf), so
+    # every graded construct has a program that demonstrates it running.
+    # See docs/CHECKLIST_COVERAGE.md for the row-by-row map.
+    "check1_declarations",
+    "check2_expressions",
+    "check3_control_flow",
+    "check4_functions",
+    "check5_io_heap",
 ]
 
 NEGATIVE_FIXTURES = [
@@ -71,6 +84,16 @@ NEGATIVE_FIXTURES = [
     ("tests/infinite_recursion.src", "[RUNTIME ERROR]", 3),
     ("tests/recursive_struct_error.src", "[SEMANTIC ERROR]", 2),
     ("tests/dynamic_inner_dim_error.src", "[SEMANTIC ERROR]", 2),
+    ("tests/unequal_dims_oob.src", "[RUNTIME ERROR]", 3),
+    # The five semantic errors the course rubric names explicitly, one
+    # fixture each, plus a file combining them to show the analyser
+    # reports every error in a run rather than stopping at the first.
+    ("tests/sem_undeclared_var.src", "[SEMANTIC ERROR]", 2),
+    ("tests/sem_type_mismatch.src", "[SEMANTIC ERROR]", 2),
+    ("tests/sem_redeclared_var.src", "[SEMANTIC ERROR]", 2),
+    ("tests/sem_const_reassign.src", "[SEMANTIC ERROR]", 2),
+    ("tests/sem_arg_cardinality.src", "[SEMANTIC ERROR]", 2),
+    ("tests/sem_multi_errors.src", "[SEMANTIC ERROR]", 2),
 ]
 
 FEATURE_FIXTURES = [
@@ -82,6 +105,7 @@ FEATURE_FIXTURES = [
     "negative_mod",
     "string_comparison",
     "nested_array",
+    "unequal_dims",
     "struct_array",
     "nested_struct",
     "struct_return",

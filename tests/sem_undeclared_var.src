@@ -1,0 +1,8 @@
+// Negative fixture: checklist semantic error 1 - undeclared variable.
+// `running_total` is never declared, in this scope or any enclosing one.
+void main() {
+    var int x;
+
+    x = 5;
+    print(x + running_total);
+}

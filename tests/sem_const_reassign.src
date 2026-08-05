@@ -1,0 +1,10 @@
+// Negative fixture: checklist semantic error 4 - constant reassignment.
+// A `const` binding is frozen. (tests/semantic_error.src pins the same
+// rule for `val`, the function-local immutable form; this one pins it for
+// a global `const`.)
+const int MAX_TRIES = 3;
+
+void main() {
+    MAX_TRIES = 5;
+    print(MAX_TRIES);
+}

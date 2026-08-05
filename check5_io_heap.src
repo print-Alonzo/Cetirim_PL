@@ -1,0 +1,176 @@
+// check5_io_heap.src
+// Checklist rows: Input Stmt, Output Stmt, and Heap Simulation.
+//
+// The language has no pointer type, so there is nothing to dereference and
+// no address to take. What it does have is a split allocation model, and
+// that is what the second half of this program demonstrates: arrays and
+// structs are allocated as heap objects and handled by reference, while
+// scalars live in the call frame and are copied. Every aliasing effect
+// below follows from that one rule.
+
+struct Point {
+    int x, y;
+};
+
+struct Node {
+    string label;
+    int weight;
+};
+
+// Scalar parameter: the callee writes to its own private copy.
+void bump_scalar(int n) {
+    n = n + 1000;
+}
+
+// Array parameter: caller and callee share one underlying array object.
+void bump_array(int a[], int len) {
+    var int i;
+    for (i = 0; i < len; i = i + 1) {
+        a[i] = a[i] + 1000;
+    }
+}
+
+// Struct parameter: likewise shared, so a field write escapes the callee.
+void bump_struct(struct Point p) {
+    p.x = p.x + 1000;
+    p.y = p.y + 1000;
+}
+
+// A scalar can only be "modified" by handing a new value back out.
+int bumped(int n) {
+    return n + 1000;
+}
+
+// Each call allocates a fresh record and returns a reference to it.
+struct Node make_node(string label, int weight) {
+    var struct Node n;
+    n.label = label;
+    n.weight = weight;
+    return n;
+}
+
+void main() {
+    var int a, b;
+    var float gpa;
+    var string name;
+    var char grade;
+    var bool active;
+
+    var int scalar;
+    var int nums[4] = {1, 2, 3, 4};
+    var struct Point pt;
+    var struct Point alias;
+    var int shared[3] = {7, 8, 9};
+    var int also_shared[3];
+    var struct Node roster[3];
+    var struct Node first, second;
+    var int i;
+
+    // ================= Output Stmt =================
+    print("---- output ----");
+    // print takes any number of arguments and separates them with a space.
+    print("a plain string");
+    print("mixed argument types:", 42, 3.5, 'Z', true, "and text");
+    print("no arguments at all produces an empty line:");
+    print("");
+
+    // Escape sequences inside a string literal.
+    print("escapes: tab[\t] newline[\n] quote[\"] backslash[\\]");
+
+    // Interpolated strings are how text is joined, since + is numeric only.
+    print(`interpolated: 6 * 7 = {6 * 7}, and a literal brace is \{this\}`);
+
+    // Aggregates print structurally.
+    print("an array prints as:", nums);
+    print("");
+
+    // ================= Input Stmt =================
+    print("---- input ----");
+    // input() reads whitespace-separated tokens and parses each one
+    // according to its target variable's declared type. Targets must be
+    // scalars; reading straight into an array or struct is rejected by
+    // the semantic analyser.
+    print("Enter two integers:");
+    input(a, b);
+    print("read two ints:", a, "and", b, "-> sum", a + b, "product", a * b);
+
+    print("Enter a float:");
+    input(gpa);
+    print("read float:", gpa, "-> doubled", gpa * 2.0);
+
+    print("Enter a name, a letter grade, and true/false:");
+    input(name, grade, active);
+    print("read string:", name, " char:", grade, " bool:", active);
+
+    // Values read at run time flow into ordinary expressions.
+    print(`summary: {name} scored {gpa} ({grade}), active = {active}`);
+    print("");
+
+    // ================= Heap Simulation =================
+    // Arrays and structs are heap-allocated objects; a variable holds a
+    // reference to one. Scalars are stored in the frame and copied.
+    print("---- allocation and reference semantics ----");
+
+    scalar = 1;
+    pt.x = 1;
+    pt.y = 2;
+
+    print("before any call:  scalar =", scalar, " nums =", nums,
+          " pt = (", pt.x, ",", pt.y, ")");
+
+    bump_scalar(scalar);
+    bump_array(nums, 4);
+    bump_struct(pt);
+
+    print("after the calls:  scalar =", scalar, " nums =", nums,
+          " pt = (", pt.x, ",", pt.y, ")");
+    print("  the scalar is unchanged - the callee got a copy");
+    print("  the array and struct changed - the callee got the same object");
+
+    // The only way to change a caller's scalar is to return a new value.
+    scalar = bumped(scalar);
+    print("  scalar updated through a return value:", scalar);
+    print("");
+
+    // ---- Aliasing: assigning an aggregate copies the reference, not the
+    //      contents, so both names now denote one object. ----
+    print("---- aliasing ----");
+    alias = pt;
+    alias.x = -1;
+    print("after `alias = pt; alias.x = -1;`  pt.x =", pt.x, " alias.x =", alias.x);
+    print("  one record, two names");
+
+    also_shared = shared;
+    also_shared[0] = -1;
+    print("after `also_shared = shared; also_shared[0] = -1;`");
+    print("  shared =", shared, " also_shared =", also_shared);
+    print("  one array, two names");
+    print("");
+
+    // ---- Distinct allocations: every slot of an array of structs is its
+    //      own record, so writing one never disturbs the others. ----
+    print("---- one allocation per slot ----");
+    for (i = 0; i < 3; i = i + 1) {
+        roster[i].label = `node{i}`;
+        roster[i].weight = (i + 1) * 10;
+    }
+    roster[1].weight = 999;
+    for (i = 0; i < 3; i = i + 1) {
+        print("  roster[", i, "] =", roster[i].label, roster[i].weight);
+    }
+    print("  only slot 1 moved, so the three records are separate objects");
+
+    // Each call to a struct-returning function allocates a new record.
+    first = make_node("first", 1);
+    second = make_node("second", 2);
+    second.weight = 42;
+    print("  first  =", first.label, first.weight);
+    print("  second =", second.label, second.weight);
+    print("  the two returned records are independent allocations");
+
+    // Reclamation is automatic: a record with no remaining reference simply
+    // becomes unreachable. There is no free/delete in the language.
+    first = second;
+    print("  after `first = second;` both names denote:", first.label, first.weight);
+    print("  the record that `first` used to hold is now unreachable");
+}

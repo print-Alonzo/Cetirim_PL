@@ -620,7 +620,9 @@ error, not silent corruption.
 void main() {
     val int primes[4] = {2, 3, 5, 7};   // with an initializer
     var int buf[8];                     // zero-filled
-    var int grid[3][3];                 // two-dimensional
+    var int grid[3][3];                 // two-dimensional (C-style: first
+                                        // bracket is the outer dimension,
+                                        // so int g[2][3] is 2 rows of 3)
 
     buf[0] = primes[3];
     grid[1][2] = 42;
@@ -644,8 +646,8 @@ void main() {
 }
 ```
 
-Only that outermost dimension may be dynamic — in `int grid[3][n]` the `n` is
-fine, but `int grid[n][3]` is rejected.
+Only that outermost dimension — the *first* bracket written — may be dynamic:
+in `int grid[n][3]` the `n` is fine, but `int grid[3][n]` is rejected.
 
 ### Structs
 

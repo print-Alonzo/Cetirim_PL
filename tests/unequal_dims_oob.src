@@ -1,0 +1,9 @@
+// Negative fixture: with C-style row-major order, `int g[2][3]`'s outer
+// dimension has length 2 - `g[2][0]` must be a runtime bounds error on the
+// *outer* index (under the old last-bracket-outermost nesting it would have
+// been silently in bounds).
+void main() {
+    var int g[2][3];
+    g[2][0] = 1;
+    print(g);
+}

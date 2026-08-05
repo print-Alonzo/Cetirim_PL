@@ -94,15 +94,15 @@ def merge_type(base, declarator):
 
     `declarator["arrays"]` is a plain list of size expressions (or `None`
     for `[]`), one per bracket pair, in the order they were scanned
-    left-to-right (see grammar.py's `_declarator_name_fn`). Each iteration
-    wraps the *previous* result, so the first bracket scanned becomes the
-    innermost `ArrayType` and the last becomes the outermost — e.g. for
-    `int x[3];`, `arrays == [Literal(3)]` and this returns
-    `ArrayType(base=Type(int), size=Literal(3))`.
+    left-to-right (see grammar.py's `_declarator_name_fn`). The list is
+    folded in *reverse*, so the first bracket written becomes the
+    outermost `ArrayType` and the last the innermost — C-style row-major:
+    `int g[2][3];` is 2 slots each holding an `int[3]`, i.e.
+    `ArrayType(size=2, base=ArrayType(size=3, base=Type(int)))`.
     """
     typ = base
 
-    for size in declarator["arrays"]:
+    for size in reversed(declarator["arrays"]):
         typ = Node("ArrayType", {"base": typ, "size": size})
 
     return typ

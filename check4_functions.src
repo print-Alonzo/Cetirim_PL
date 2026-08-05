@@ -1,0 +1,195 @@
+// check4_functions.src
+// Checklist rows: Functions (Declare, Call, Recursion), plus the call
+//                 forms the language supports - positional, named,
+//                 defaulted, multi-value return, array and struct
+//                 parameters.
+
+struct Point {
+    int x, y;
+};
+
+// ---- Declare: a void function, called only for its effect ----
+void announce(string heading) {
+    print("----", heading, "----");
+}
+
+// ---- Declare: a scalar-returning function ----
+int square(int n) {
+    return n * n;
+}
+
+// ---- Declare: a float return, and a parameter promoted from int ----
+float average_of(int total, int count) {
+    return total * 1.0 / count;
+}
+
+// ---- Declare: an array parameter. Arrays carry no length, so it is
+//      passed alongside. ----
+int sum_array(int values[], int len) {
+    var int total, i;
+    total = 0;
+    for (i = 0; i < len; i = i + 1) {
+        total = total + values[i];
+    }
+    return total;
+}
+
+// ---- Declare: a struct return type ----
+struct Point make_point(int x, int y) {
+    var struct Point p;
+    p.x = x;
+    p.y = y;
+    return p;
+}
+
+// ---- Declare: multiple return values, as a parenthesised tuple ----
+(int, int) divmod(int a, int b) {
+    return a / b, a % b;
+}
+
+(int, int, int) min_mid_max(int a, int b, int c) {
+    var int lo, hi, mid;
+    lo = a;
+    hi = a;
+    if (b < lo) { lo = b; }
+    if (c < lo) { lo = c; }
+    if (b > hi) { hi = b; }
+    if (c > hi) { hi = c; }
+    mid = a + b + c - lo - hi;
+    return lo, mid, hi;
+}
+
+// ---- Declare: a trailing default parameter value (must be a literal) ----
+string greet(string name, int count = 0) {
+    return `Hello, {name}! You have {count} message(s).`;
+}
+
+// ================= Recursion =================
+
+// Direct recursion with a single base case.
+int factorial(int n) {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+// Tree recursion: two recursive calls per invocation.
+int fib(int n) {
+    if (n < 2) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+// Recursion that shrinks a pair of arguments rather than one counter.
+int gcd(int a, int b) {
+    if (b == 0) {
+        return a;
+    }
+    return gcd(b, a % b);
+}
+
+// Recursion over an array, by moving the index rather than the array.
+int sum_from(int values[], int len, int i) {
+    if (i >= len) {
+        return 0;
+    }
+    return values[i] + sum_from(values, len, i + 1);
+}
+
+// Mutual recursion: each of these is defined in terms of the other.
+// The language has no forward declarations and needs none - the semantic
+// analyser collects every function signature in its first pass, before it
+// analyses any body, so is_even_r may call is_odd_r from above it.
+bool is_even_r(int n) {
+    if (n == 0) {
+        return true;
+    }
+    return is_odd_r(n - 1);
+}
+
+bool is_odd_r(int n) {
+    if (n == 0) {
+        return false;
+    }
+    return is_even_r(n - 1);
+}
+
+void main() {
+    val int data[6] = {3, 7, 1, 9, 4, 6};
+    var struct Point p;
+    var int i;
+    var float avg;
+
+    // A `let` is a declaration, so a destructuring `let` belongs up here
+    // with the other declarations; the typed spellings further down are
+    // statements and may appear anywhere.
+    let seed_q, seed_r = divmod(17, 5);
+
+    // ================= Call =================
+    announce("calling functions");
+    print("square(7)              =", square(7));
+    print("sum_array(data, 6)     =", sum_array(data, 6));
+
+    avg = average_of(sum_array(data, 6), 6);
+    print("average_of(sum, 6)     =", avg);
+
+    // A call used directly as another call's argument.
+    print("square(square(3))      =", square(square(3)));
+
+    // A call inside an interpolated string and inside arithmetic.
+    print(`interpolated: square(5) is {square(5)}`);
+    print("square(4) + square(3)  =", square(4) + square(3));
+
+    // ---- Struct-returning call ----
+    p = make_point(3, 4);
+    print("make_point(3, 4)       = (", p.x, ",", p.y, ")");
+
+    // ---- Multi-value returns, destructured ----
+    print("divmod(17, 5)          =", seed_q, "remainder", seed_r);
+
+    int q2, r2 = divmod(100, 7);
+    print("divmod(100, 7)         =", q2, "remainder", r2);
+
+    // A discarded position: the value is computed, just not stored.
+    int onlyq, int _ = divmod(45, 6);
+    print("divmod(45, 6) quotient =", onlyq);
+
+    int lo, mid, hi = min_mid_max(42, 8, 17);
+    print("min_mid_max(42, 8, 17) =", lo, mid, hi);
+
+    // ---- Named and defaulted arguments ----
+    announce("argument forms");
+    print(greet("Alonzo", 4));                 // positional
+    print(greet(name: "World", count: 1));     // named
+    print(greet(count: 2, name: "Reordered")); // named, out of order
+    print(greet("Default"));                   // trailing default applies
+
+    // ================= Recursion =================
+    announce("recursion");
+    for (i = 0; i <= 6; i = i + 1) {
+        print(`factorial({i}) = {factorial(i)}`);
+    }
+
+    print("fib(0..10):");
+    for (i in 0..10) {
+        print("   fib(", i, ") =", fib(i));
+    }
+
+    print("gcd(1071, 462)         =", gcd(1071, 462));
+    print("gcd(17, 5)             =", gcd(17, 5));
+
+    print("sum_from(data, 6, 0)   =", sum_from(data, 6, 0),
+          "(same total, computed recursively)");
+
+    print("mutual recursion, is_even_r / is_odd_r:");
+    for (i in 0..5) {
+        print("  ", i, "even?", is_even_r(i), " odd?", is_odd_r(i));
+    }
+
+    // ---- Scalars are passed by value, so recursion never clobbers a
+    //      caller's own copy of the counter. ----
+    i = 5;
+    print("factorial(i) =", factorial(i), "and i is still", i);
+}

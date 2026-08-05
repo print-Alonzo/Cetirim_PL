@@ -1,0 +1,200 @@
+// check3_control_flow.src
+// Checklist rows: If Stmt, Loops (While, For, Repeat-Until/Do-while),
+//                 Nested Statements.
+//
+// Every loop form the language has, the if/else chain that stands in for
+// `else if`, `break`/`continue`, and control structures nested three deep
+// (loop inside conditional inside loop).
+
+const int TABLE_SIZE = 4;
+
+// An if/else chain. There is no `else if` keyword, so each subsequent test
+// is an `if` nested inside the previous `else`.
+string grade_of(int score) {
+    if (score >= 90) {
+        return "A";
+    } else {
+        if (score >= 80) {
+            return "B";
+        } else {
+            if (score >= 70) {
+                return "C";
+            } else {
+                return "F";
+            }
+        }
+    }
+}
+
+// A loop and a conditional inside a function, with an early return.
+bool is_prime(int n) {
+    var int d;
+    if (n < 2) {
+        return false;
+    }
+    for (d = 2; d * d <= n; d = d + 1) {
+        if (n % d == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void main() {
+    val int scores[5] = {95, 82, 77, 90, 68};
+    var int i, j, n, count, sum, product;
+    var bool found;
+
+    // ================= If Stmt =================
+    print("---- if / else ----");
+    for (i = 0; i < 5; i = i + 1) {
+        print("score", scores[i], "-> grade", grade_of(scores[i]));
+    }
+
+    // A plain two-way if, and an if with no else.
+    n = 7;
+    if (n % 2 == 0) {
+        print(n, "is even");
+    } else {
+        print(n, "is odd");
+    }
+    if (n > 0) {
+        print(n, "is positive (an if with no else at all)");
+    }
+    print("");
+
+    // ================= While =================
+    print("---- while ----");
+    n = 1;
+    count = 0;
+    while (n < 100) {
+        n = n * 3;
+        count = count + 1;
+    }
+    print("tripling from 1 passed 100 after", count, "steps, reaching", n);
+
+    // A while that never runs, because the condition is false up front.
+    count = 0;
+    while (false) {
+        count = count + 1;
+    }
+    print("a while whose condition starts false runs", count, "times");
+    print("");
+
+    // ================= For: all three forms =================
+    print("---- for (C-style) ----");
+    sum = 0;
+    for (i = 0; i < 5; i = i + 1) {
+        sum = sum + scores[i];
+    }
+    print("sum of scores:", sum);
+
+    // The init and update clauses may each be omitted.
+    i = 0;
+    product = 1;
+    for (; i < 4; ) {
+        i = i + 1;
+        product = product * i;
+    }
+    print("4! computed with an empty init and update:", product);
+    print("");
+
+    print("---- for over an inclusive range ----");
+    // `..` is inclusive on both ends, so 0..4 visits five indices.
+    sum = 0;
+    for (i in 0..4) {
+        sum = sum + scores[i];
+    }
+    print("same sum, via for (i in 0..4):", sum);
+
+    print("---- for over a collection ----");
+    sum = 0;
+    for (n in scores) {
+        sum = sum + n;
+    }
+    print("same sum again, via for (n in scores):", sum);
+    print("");
+
+    // ================= Repeat-Until =================
+    print("---- repeat / until ----");
+    // Runs its body first and loops *until* the condition becomes true,
+    // which is the opposite sense of `while`.
+    n = 0;
+    repeat {
+        n = n + 5;
+    } until (n >= 20);
+    print("counted up by 5s until reaching 20:", n);
+
+    // The body always runs at least once, even when the condition is
+    // already true on entry - the difference from `while`.
+    count = 0;
+    repeat {
+        count = count + 1;
+    } until (true);
+    print("a repeat whose condition is already true still runs", count, "time");
+    print("");
+
+    // ================= break and continue =================
+    print("---- break / continue ----");
+    // continue skips the rest of this iteration; break leaves the loop.
+    for (i = 1; i <= 20; i = i + 1) {
+        if (i % 3 != 0) {
+            continue;
+        }
+        if (i > 12) {
+            break;
+        }
+        print("multiple of 3, not past 12:", i);
+    }
+
+    // break inside a while, driven by a search.
+    found = false;
+    i = 0;
+    while (i < 5) {
+        if (scores[i] == 77) {
+            found = true;
+            break;
+        }
+        i = i + 1;
+    }
+    print("found 77 at index", i, "->", found);
+    print("");
+
+    // ================= Nested Statements =================
+    print("---- nested statements ----");
+
+    // A for inside a for: a multiplication table.
+    print("multiplication table:");
+    for (i = 1; i <= TABLE_SIZE; i = i + 1) {
+        for (j = 1; j <= TABLE_SIZE; j = j + 1) {
+            print(`   {i} x {j} = {i * j}`);
+        }
+    }
+
+    // Three deep: for -> if -> while. The inner while re-derives each
+    // number's largest proper divisor.
+    print("largest proper divisor of each prime-free number in 2..10:");
+    for (n in 2..10) {
+        if (!is_prime(n)) {
+            j = n - 1;
+            while (j > 1) {
+                if (n % j == 0) {
+                    break;
+                }
+                j = j - 1;
+            }
+            print("  ", n, "-> largest proper divisor", j);
+        }
+    }
+
+    // A conditional inside a loop inside a conditional.
+    count = 0;
+    if (TABLE_SIZE > 0) {
+        for (i = 0; i < 5; i = i + 1) {
+            if (scores[i] >= 80) {
+                count = count + 1;
+            }
+        }
+    }
+    print("scores of 80 or better:", count);
+}

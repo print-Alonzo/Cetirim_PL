@@ -460,12 +460,15 @@ class Analyzer:
         `_array_depth` counts how many `ArrayType` levels deep the current
         node is from the entry call (0 at every external call site; bumped
         by 1 only when recursing into an `ArrayType`'s own `base`). Only
-        the outermost dimension (depth 0) may have a non-literal size:
-        `ir.py`'s `_gen_array_declare` recovers exactly one runtime-computed
-        size expression from the declarator's `ArrayType` node (the
-        outermost one) and has no way to compute a second, so a non-literal
-        *inner* dimension (e.g. `int grid[3][n];`) is rejected here instead
-        of silently becoming a zero-length dimension at runtime."""
+        the outermost dimension (depth 0 — the *first* bracket written,
+        since `merge_type` nests C-style with the first bracket outermost)
+        may have a non-literal size: `ir.py`'s `_gen_array_declare`
+        recovers exactly one runtime-computed size expression from the
+        declarator's `ArrayType` node (the outermost one) and has no way
+        to compute a second, so a non-literal *inner* dimension (the `n`
+        in `int grid[3][n];`) is rejected here instead of silently
+        becoming a zero-length dimension at runtime; `int grid[n][3];`
+        stays legal."""
         if node is None:
             return T_ERROR
         if node.kind == "Type":
