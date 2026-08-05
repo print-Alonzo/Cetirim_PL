@@ -126,6 +126,11 @@ class IRExecutor:
         self.on_pause = on_pause
         self.on_line = on_line
         self._stepping = False
+        # Step-over state: the call depth and source line the step was issued
+        # at. Both stay None for a plain step-into, which is what tells
+        # `_should_step_pause` the two modes apart.
+        self._step_depth = None
+        self._step_line = None
         self._stop_requested = False
         self._resume_event = threading.Event()
         # Every LABEL's quad index is resolved exactly once, up front, so
@@ -351,7 +356,11 @@ class IRExecutor:
         attached (the `or self._stop_requested` arm of its guard), so a
         stop request lands within one quad in any mode - and
         `_next_input_token` has its own check, so a run blocked waiting for
-        input stops as soon as the input provider returns."""
+        input stops as soon as the input provider returns.
+
+        A breakpoint is checked independently of the stepping state, so a
+        breakpoint inside a function being *stepped over* still pauses -
+        the same precedence every mainstream debugger uses."""
         if self._stop_requested:
             raise DebugStopped()
         if line is None or line == self._prev_line:
@@ -359,25 +368,64 @@ class IRExecutor:
         self._prev_line = line
         if self.on_line is not None:
             self.on_line(line)
-        if self.on_pause is not None and (self._stepping or line in self.breakpoints):
+        if self.on_pause is not None and (self._should_step_pause(line) or line in self.breakpoints):
             self._stepping = False
+            self._step_depth = None
+            self._step_line = None
             self.on_pause(line)
             self._resume_event.wait()
             self._resume_event.clear()
             if self._stop_requested:
                 raise DebugStopped()
 
+    def _should_step_pause(self, line):
+        """Whether the in-flight step (if any) is satisfied by this statement
+        boundary - the one place the debugger's two trace modes differ.
+
+        Step-into (`_step_depth is None`) takes the very next boundary,
+        wherever it lands, including the first line of a callee. Step-over
+        additionally requires that we're back in the frame the step was
+        issued from - or shallower, so stepping over a `return` lands in the
+        caller and an exception unwinding several frames still pauses at its
+        catch handler - and that we aren't merely resuming the *same* line
+        we stepped off of. That last clause matters because a call is rarely
+        the whole statement: `int x = f();` lowers to PARAM/CALL/ASSIGN quads
+        that all carry one line, so control comes back to that line after
+        RETURN and would otherwise stop a second time on the line the user
+        just asked to step past."""
+        if not self._stepping:
+            return False
+        if self._step_depth is None:
+            return True
+        return len(self.call_stack) <= self._step_depth and line != self._step_line
+
     def dbg_step(self):
         """Resume a paused run for exactly one more source line, then pause
-        again. Safe to call from another thread while this executor's
-        thread is blocked in `_check_pause`."""
+        again - descending into a callee if this line calls one. Safe to
+        call from another thread while this executor's thread is blocked in
+        `_check_pause`."""
         self._stepping = True
+        self._step_depth = None
+        self._step_line = None
+        self._resume_event.set()
+
+    def dbg_step_over(self):
+        """Resume a paused run for one more source line *in the current
+        frame*, running any function this line calls to completion instead
+        of pausing inside it. Same threading contract as `dbg_step`: the
+        executor thread is parked in `_check_pause`, so `call_stack` and
+        `_prev_line` are stable to read from the caller's thread here."""
+        self._stepping = True
+        self._step_depth = len(self.call_stack)
+        self._step_line = self._prev_line
         self._resume_event.set()
 
     def dbg_continue(self):
         """Resume a paused run until the next breakpoint (or the program
         ends)."""
         self._stepping = False
+        self._step_depth = None
+        self._step_line = None
         self._resume_event.set()
 
     def dbg_stop(self):
