@@ -74,6 +74,23 @@ else.
 | Struct/array literal-init and equality untested by the 5 required programs | `tests/struct_array_init.src` now exercises both |
 | A `match` expression used as a bare assignment/call-argument value hangs the parser | **Misattributed to `match` — it never was.** `r = match (x) { 1 => "one", _ => "other" };` (`samples/prog4_structs_match_exceptions.src:101`) and `print(match (x) { ... })` always parsed fine; a bare stray top-level `}` with no `match` anywhere reproduces the exact same hang. Root cause: `grammar_engine.py`'s `many_rec` could make zero progress when error recovery stranded the cursor on a `}` that the enclosing loop's `is_stop` didn't recognize as a stop (true for the top-level `program` loop, which never stops on `}`) — recovery would land on the same token forever, appending an unbounded stream of errors. Fixed by giving `many_rec` a forward-progress invariant: if an iteration consumes zero tokens and the loop isn't about to stop anyway, force a one-token step. The original repro used `;` to separate match-*expression* arms, which is actually invalid (expression arms are comma-separated; `;` is the match-*statement* form) — that's now a single precise `[SYNTAX ERROR]` instead of a cascade that happened to strand the cursor on `}`. See `tests/stray_brace.src` (pins the engine fix, `match`-independent) and `tests/match_expr_semicolon.src` (pins the new diagnostic) |
 
+Two small open quirks in the IDE (`cetirim_ide.py`), found while verifying
+it against the current pipeline and recorded here in that same spirit:
+
+- **Submitting an empty line in the IDE terminal raises a spurious
+  `Unexpected end of input` runtime error.** The IDE's `input_provider`
+  returns the entry's text verbatim, so an empty submit hands
+  `_next_input_token` the empty string — which is the CLI's *EOF* signal.
+  At a real terminal an empty line arrives as `"\n"`, splits to zero
+  tokens, and simply re-prompts. Fix sketch: return `value + "\n"` from
+  the provider so the two paths agree.
+- **The call-stack panel's `"(top level)"` fallback is dead code.**
+  `reversed(executor.call_names) or ["(top level)"]` never takes the `or`
+  branch — `reversed()` returns an (always-truthy) iterator, not a list.
+  Harmless in practice: the synthetic prologue quads (`CALL main` and
+  friends) carry `line=None` and can never pause, so `call_names` is
+  non-empty at every pause the panel can ever render.
+
 ---
 
 ## 3. Scope limitations

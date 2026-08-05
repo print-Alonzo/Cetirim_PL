@@ -37,6 +37,7 @@ The language supports typed variable/constant declarations, control flow (if-els
 ├── ir.py                                       # Intermediate code generator: AST + SymbolTable -> quadruples
 ├── optimizer.py                                # Optional IR optimizer + viewable before/after report (JSON for the IDE)
 ├── interpreter.py                              # VM: executes quadruples; CLI entry point for running a program
+├── cetirim_ide.py                              # Tkinter IDE: editor, integrated debugger, optimizer view
 ├── run_tests.py                                # Golden-output test runner (--update to regenerate goldens)
 ├── build.py                                    # Packages the runtime modules into cetirim.pyz (stdlib zipapp)
 ├── cetirim.pyz                                 # Built standalone binary — rebuild with `python build.py`
@@ -87,6 +88,10 @@ Breakpoints can be toggled even while a debug session is running.
 The **Debug** tab also has a **Watch** panel: type a variable name and click **Add** (or press Enter) to track it — its value refreshes every time execution pauses, showing `<not in scope>` if that variable isn't currently live. Double-click a watch entry to remove it.
 
 The **Trace** tab logs every source line executed during a debug session, in order, along with which function it ran in — a full execution history, not just the lines you stopped on. It's populated even while just using Continue, not only while stepping.
+
+### Optimizer view
+
+Press **Optimize** (toolbar or Tools menu) to run the [IR optimizer](#ir-optimization) on the current program and open the **Optimizer** tab: the original quad listing color-coded by each quad's fate (red = removed, amber = rewritten), the optimized listing beside it, the transformation log (double-click an entry to jump to the source line it came from), and a stats summary — how many quads survived, and how much work each of the three techniques found. The view is display-only: **Run** and **Debug** always execute the unoptimized IR, so breakpoints keep lining up with source lines (the test suite's differential `-O` checks prove the optimized IR produces byte-identical output anyway).
 
 ---
 
@@ -315,8 +320,10 @@ their bounds and key checks can raise.
 
 ### JSON payload for the IDE
 
-`--json` emits a self-contained payload the web IDE can render as a
-side-by-side diff without doing any analysis of its own:
+`--json` emits a self-contained payload a viewer can render as a
+side-by-side diff without doing any analysis of its own. The IDE's
+Optimizer tab shows exactly this view — it calls `build_view()` directly
+rather than shelling out for the JSON:
 
 ```json
 {
