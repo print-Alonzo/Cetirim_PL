@@ -86,6 +86,20 @@ python cetirim_ide.py
 
 The IDE is connected to this project's scanner, parser, and interpreter. It provides syntax highlighting and lexical-error marking, Ctrl+Space templates / keyword autocomplete, a navigable code outline, rename refactoring (`Ctrl+R`), problem checking, integrated execution (`F5`), and adjustable editor font size. The Output tab behaves as an interactive terminal: when a program calls `input(...)`, type the requested value there and press Enter or **Send**.
 
+### Debugger
+
+Click a line number in the gutter to toggle a breakpoint on that line. Press **Debug** or `F6` to run the program in debug mode. Execution pauses when it reaches a breakpoint, highlighting the current line in the editor. While paused, the **Debug** tab shows the active **Call Stack** (which function is executing, and who called it) and the **Variables** currently in scope (locals, then globals):
+
+- **Step ⏵** — run just the next source line, then pause again.
+- **Continue ⏭** — resume running until the next breakpoint (or the program ends).
+- **Stop ⏹** — abort the debug session.
+
+Breakpoints can be toggled even while a debug session is running.
+
+The **Debug** tab also has a **Watch** panel: type a variable name and click **Add** (or press Enter) to track it — its value refreshes every time execution pauses, showing `<not in scope>` if that variable isn't currently live. Double-click a watch entry to remove it.
+
+The **Trace** tab logs every source line executed during a debug session, in order, along with which function it ran in — a full execution history, not just the lines you stopped on. It's populated even while just using Continue, not only while stepping.
+
 ---
 
 ## Running the Scanner

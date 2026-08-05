@@ -348,6 +348,7 @@ class IRGenerator:
         for fn in func_decls:
             self.gen_function(fn)
 
+        self._current_line = None
         self.emit("LABEL", result=start_label)
         self.emit("CALL", "main", 0, None)
         self.emit("HALT")

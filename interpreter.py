@@ -33,6 +33,7 @@ project's design assumptions, for free.
 import argparse
 import operator
 import sys
+import threading
 
 from ir import Const, IRGenError, _div, _mod, format_quads, generate
 from parser import parse_source
@@ -66,6 +67,12 @@ class UncaughtException(Exception):
         super().__init__(str(value))
         self.value = value
         self.line = line
+
+
+class DebugStopped(Exception):
+    """Raised internally to unwind `run()` when the debugger's Stop control
+    is used. Caught in `run()` and treated as a plain (non-error) return -
+    the program simply didn't finish, rather than having crashed."""
 
 
 class StructValue(dict):
@@ -102,7 +109,7 @@ class IRExecutor:
     completion (or until a runtime error/uncaught exception aborts it)."""
 
     def __init__(self, quads, functions, var_types, structs, trace=False, max_steps=10_000_000,
-                 max_depth=10_000, input_provider=None):
+                 max_depth=10_000, input_provider=None, breakpoints=None, on_pause=None, on_line=None):
         self.quads = quads
         self.functions = functions
         self.var_types = var_types
@@ -115,6 +122,12 @@ class IRExecutor:
         # The callback receives every target in one `input(...)` statement
         # and returns one whitespace-separated input line.
         self.input_provider = input_provider
+        self.breakpoints = breakpoints if breakpoints is not None else set()
+        self.on_pause = on_pause
+        self.on_line = on_line
+        self._stepping = False
+        self._stop_requested = False
+        self._resume_event = threading.Event()
         # Every LABEL's quad index is resolved exactly once, up front, so
         # JMP/JZ/JNZ during execution are an O(1) dict lookup rather than a
         # linear scan for the matching label each time a jump happens.
@@ -137,12 +150,14 @@ class IRExecutor:
         LIMITATIONS.md - previously there was no cap on either)."""
         self.globals = {}
         self.call_stack = []  # (return_pc, result_temp, caller_frame)
+        self.call_names = []  # function name for each entry in call_stack, for a debugger's call-stack view
         self.exception_handlers = []  # (handler_pc, frame, call_stack_depth)
         self.pending_args = []
         self.current_exception = None
         self._input_buffer = []
         self.frame = self.globals
         self.pc = 0
+        self._prev_line = None
 
         try:
             steps = 0
@@ -151,9 +166,13 @@ class IRExecutor:
                     self._runtime_error(f"Exceeded maximum step count ({self.max_steps}) - possible infinite loop")
                 steps += 1
                 q = self.quads[self.pc]
+                if self.on_pause is not None or self.on_line is not None:
+                    self._check_pause(q.line)
                 if self.trace:
                     print(f"{self.pc:04d}: {q}", file=sys.stderr)
                 self._exec(q)
+        except DebugStopped:
+            return
         except _NATIVE_RUNTIME_ERRORS as e:
             line = self.quads[self.pc].line if self.pc < len(self.quads) else None
             if isinstance(e, ZeroDivisionError):
@@ -316,6 +335,54 @@ class IRExecutor:
         else:
             raise NotImplementedError(f"Unsupported opcode: {op}")
 
+    # -- debugger ----------------------------------------------------------
+
+    def _check_pause(self, line):
+        """Called once per quad (only when a debugger is attached, i.e.
+        `on_pause` and/or `on_line` was given) before that quad executes.
+        `on_line` fires on every *statement boundary* - the first quad of a
+        new source line - unconditionally, giving a debugger a full
+        execution trace even for lines that never pause. Pausing itself
+        (`on_pause`) only ever happens at that same statement-boundary
+        granularity, since one source line can lower to several quads and a
+        debugger should show one stop per line, not per quad. Also doubles
+        as the Stop control's check point, so a program stuck in a
+        breakpoint-free loop still notices a stop request promptly (once per
+        line, not once per quad, but that's frequent enough in practice)."""
+        if self._stop_requested:
+            raise DebugStopped()
+        if line is None or line == self._prev_line:
+            return
+        self._prev_line = line
+        if self.on_line is not None:
+            self.on_line(line)
+        if self.on_pause is not None and (self._stepping or line in self.breakpoints):
+            self._stepping = False
+            self.on_pause(line)
+            self._resume_event.wait()
+            self._resume_event.clear()
+            if self._stop_requested:
+                raise DebugStopped()
+
+    def dbg_step(self):
+        """Resume a paused run for exactly one more source line, then pause
+        again. Safe to call from another thread while this executor's
+        thread is blocked in `_check_pause`."""
+        self._stepping = True
+        self._resume_event.set()
+
+    def dbg_continue(self):
+        """Resume a paused run until the next breakpoint (or the program
+        ends)."""
+        self._stepping = False
+        self._resume_event.set()
+
+    def dbg_stop(self):
+        """Abort a debug run, whether it's currently paused or still
+        running freely between breakpoints."""
+        self._stop_requested = True
+        self._resume_event.set()
+
     # -- storage ---------------------------------------------------------
 
     def _runtime_error(self, message):
@@ -374,6 +441,7 @@ class IRExecutor:
             del self.pending_args[len(self.pending_args) - argcount:]
         fn = self.functions[name]
         self.call_stack.append((self.pc + 1, result_temp, self.frame))
+        self.call_names.append(name)
         self.frame = dict(zip(fn["params"], args))
         self.pc = fn["entry"]
 
@@ -390,6 +458,7 @@ class IRExecutor:
             self.pc = len(self.quads)  # return from main -> halt
             return
         self.pc, result_temp, self.frame = self.call_stack.pop()
+        self.call_names.pop()
         if result_temp is not None:
             self.set_var(result_temp, value)
 
