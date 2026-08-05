@@ -29,10 +29,13 @@ UNARY_OPS = {"UMINUS": operator.neg, "UPLUS": lambda v: v, "NOT": operator.not_}
 
 
 class IRExecutor:
-    def __init__(self, quads, functions, var_types):
+    def __init__(self, quads, functions, var_types, input_provider=None):
         self.quads = quads
         self.functions = functions
         self.var_types = var_types
+        # Optional UI hook.  It receives the requested variable names and
+        # returns one whitespace-separated line of input, just like stdin.
+        self.input_provider = input_provider
         self.labels = {q.result: i for i, q in enumerate(quads) if q.op == "LABEL"}
 
     def run(self):
@@ -96,7 +99,11 @@ class IRExecutor:
                 sys.stdout.write("\n")
                 pc += 1
             elif op == "INPUT":
-                tokens = sys.stdin.readline().split()
+                if self.input_provider is not None:
+                    text = self.input_provider(q.result)
+                    tokens = text.split() if text is not None else []
+                else:
+                    tokens = sys.stdin.readline().split()
                 for name, text in zip(q.result, tokens):
                     self.set_var(name, self._coerce(text, self.var_types.get(name)), frame)
                 pc += 1

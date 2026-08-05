@@ -47,6 +47,16 @@ The language supports typed variable/constant declarations, control flow (if-els
 - Python 3.8 or higher
 - No external dependencies — standard library only
 
+## Cetirim IDE
+
+Launch the graphical development environment with:
+
+```bash
+python cetirim_ide.py
+```
+
+The IDE is connected to this project's scanner, parser, and interpreter. It provides syntax highlighting and lexical-error marking, Ctrl+Space templates / keyword autocomplete, a navigable code outline, rename refactoring (`Ctrl+R`), problem checking, integrated execution (`F5`), and adjustable editor font size. The Output tab behaves as an interactive terminal: when a program calls `input(...)`, type the requested value there and press Enter or **Send**.
+
 ---
 
 ## Running the Scanner
