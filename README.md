@@ -73,6 +73,13 @@ Launch the graphical development environment with:
 python cetirim_ide.py
 ```
 
+The IDE needs a Python whose `tkinter` is linked against **Tk 8.6 or
+newer**. On macOS, avoid `/usr/bin/python3` — Apple's bundled Tk 8.5 opens
+a blank, unpainted window on current macOS versions. Use a Homebrew Python
+with `python-tk` installed (`brew install python-tk`), or a
+[python.org](https://www.python.org) build, both of which ship a modern Tk.
+Check with: `python3 -c "import tkinter; print(tkinter.TkVersion)"`.
+
 The IDE is connected to this project's scanner, parser, and interpreter. It provides syntax highlighting and lexical-error marking, Ctrl+Space templates / keyword autocomplete, a navigable code outline, rename refactoring (`Ctrl+R`), problem checking, integrated execution (`F5`), and adjustable editor font size. The Output tab behaves as an interactive terminal: when a program calls `input(...)`, type the requested value there and press Enter or **Send**.
 
 ### Debugger
