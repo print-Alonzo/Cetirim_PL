@@ -83,7 +83,7 @@ class CetirimIDE(tk.Tk):
         ttk.Label(toolbar, text="CETIRIM", style="Title.TLabel").pack(side="left", padx=(0, 20))
         for text, callback in (("New", self.new_file), ("Open", self.open_file), ("Save", self.save_file),
                                ("Run ▶", self.run_program), ("Debug", self.debug_program), ("Check", self.check_code),
-                               ("Rename…", self.rename_symbol), ("Templates", self.show_templates)):
+                               ("Optimize", self.show_optimization), ("Rename…", self.rename_symbol), ("Templates", self.show_templates)):
             ttk.Button(toolbar, text=text, command=callback, style="Accent.TButton" if text == "Run ▶" else "TButton").pack(side="left", padx=(0, 5))
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=7)
         ttk.Label(toolbar, text="Font").pack(side="left")
@@ -106,8 +106,10 @@ class CetirimIDE(tk.Tk):
         self.editor.pack(side="left", fill="both", expand=True); scroll.config(command=self._scroll_editor)
         self._configure_tags()
         bottom = ttk.Notebook(self); bottom.pack(fill="x", padx=8, pady=(0, 8))
-        console_frame, problems_frame, debug_frame, trace_frame = ttk.Frame(bottom), ttk.Frame(bottom), ttk.Frame(bottom), ttk.Frame(bottom)
-        bottom.add(console_frame, text=" Output "); bottom.add(problems_frame, text=" Problems "); bottom.add(debug_frame, text=" Debug "); bottom.add(trace_frame, text=" Trace ")
+        self.bottom_tabs = bottom
+        console_frame, problems_frame, debug_frame, trace_frame, optimizer_frame = ttk.Frame(bottom), ttk.Frame(bottom), ttk.Frame(bottom), ttk.Frame(bottom), ttk.Frame(bottom)
+        self.optimizer_frame = optimizer_frame
+        bottom.add(console_frame, text=" Output "); bottom.add(problems_frame, text=" Problems "); bottom.add(debug_frame, text=" Debug "); bottom.add(trace_frame, text=" Trace "); bottom.add(optimizer_frame, text=" Optimizer ")
         self.console = tk.Text(console_frame, height=8, background="#070b16", foreground="#d1fae5", insertbackground="#5eead4", font=("Consolas", 11), state="disabled", borderwidth=0, padx=10, pady=8)
         self.console.pack(fill="both", expand=True)
         terminal_input = ttk.Frame(console_frame, padding=(7, 5))
@@ -148,6 +150,26 @@ class CetirimIDE(tk.Tk):
         self.watch_list.bind("<Double-1>", self.remove_watch)
         self.trace_list = tk.Listbox(trace_frame, background="#0b1020", foreground="#94a3b8", font=("Consolas", 10), borderwidth=0)
         self.trace_list.pack(fill="both", expand=True, padx=7, pady=7)
+        optimizer_toolbar = ttk.Frame(optimizer_frame, padding=(7, 5)); optimizer_toolbar.pack(fill="x")
+        ttk.Button(optimizer_toolbar, text="Optimize ⚡", command=self.show_optimization, style="Accent.TButton").pack(side="left")
+        self.optimizer_stats = ttk.Label(optimizer_toolbar, text="Press Optimize to compare the IR before and after optimization.")
+        self.optimizer_stats.pack(side="left", padx=(14, 0))
+        optimizer_panes = ttk.Frame(optimizer_frame, padding=(7, 0)); optimizer_panes.pack(fill="both", expand=True)
+        before_col = ttk.Frame(optimizer_panes); before_col.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        ttk.Label(before_col, text="ORIGINAL IR", style="Section.TLabel").pack(anchor="w")
+        self.opt_before = tk.Text(before_col, height=8, state="disabled", wrap="none", background="#0b1020", foreground="#8fa1bb", font=("Consolas", 10), borderwidth=0)
+        self.opt_before.pack(fill="both", expand=True)
+        self.opt_before.tag_configure("removed", foreground="#fb7185")
+        self.opt_before.tag_configure("rewritten", foreground="#fbbf24")
+        after_col = ttk.Frame(optimizer_panes); after_col.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        ttk.Label(after_col, text="OPTIMIZED IR", style="Section.TLabel").pack(anchor="w")
+        self.opt_after = tk.Text(after_col, height=8, state="disabled", wrap="none", background="#0b1020", foreground="#86efac", font=("Consolas", 10), borderwidth=0)
+        self.opt_after.pack(fill="both", expand=True)
+        log_col = ttk.Frame(optimizer_panes); log_col.pack(side="left", fill="both", expand=True)
+        ttk.Label(log_col, text="TRANSFORMATIONS", style="Section.TLabel").pack(anchor="w")
+        self.opt_log = tk.Listbox(log_col, height=8, background="#0b1020", foreground="#94a3b8", font=("Consolas", 10), borderwidth=0)
+        self.opt_log.pack(fill="both", expand=True)
+        self.opt_log.bind("<Double-1>", self.go_to_transformation)
         self.status = ttk.Label(self, anchor="w", padding=(12, 6), background="#121a2d", foreground="#7dd3fc"); self.status.pack(fill="x")
         self.editor.bind("<<Modified>>", self.on_modified); self.editor.bind("<KeyRelease>", self.on_key_release)
         self.editor.bind("<Control-space>", self.show_suggestions); self.editor.bind("<Control-s>", lambda e: self.save_file())
@@ -161,7 +183,7 @@ class CetirimIDE(tk.Tk):
             file_menu.add_command(label=label, command=callback, accelerator=key)
         menu.add_cascade(label="File", menu=file_menu)
         tools = tk.Menu(menu, tearoff=False)
-        for label, callback, key in (("Run", self.run_program, "F5"), ("Debug", self.debug_program, "F6"), ("Check syntax", self.check_code, ""), ("Rename symbol", self.rename_symbol, "Ctrl+R"), ("Insert template", self.show_templates, "Ctrl+Space")):
+        for label, callback, key in (("Run", self.run_program, "F5"), ("Debug", self.debug_program, "F6"), ("Check syntax", self.check_code, ""), ("Optimize IR", self.show_optimization, ""), ("Rename symbol", self.rename_symbol, "Ctrl+R"), ("Insert template", self.show_templates, "Ctrl+Space")):
             tools.add_command(label=label, command=callback, accelerator=key)
         menu.add_cascade(label="Tools", menu=tools); self.config(menu=menu)
 
@@ -281,6 +303,44 @@ class CetirimIDE(tk.Tk):
         return not errors
     def go_to_problem(self, _event=None):
         match = re.search(r"Line (\d+)", self.problems.get("active"))
+        if match: self.editor.mark_set("insert", f"{match.group(1)}.0"); self.editor.see("insert"); self.editor.focus_set()
+
+    def show_optimization(self):
+        """Run the IR optimizer on the current source and fill the Optimizer
+        tab with `build_view()`'s payload: the original listing color-coded
+        by each quad's fate, the optimized listing, and the transformation
+        log. View-only - Run/Debug always execute the unoptimized IR, so
+        breakpoints keep lining up with source lines."""
+        if not self.check_code(): return
+        from ir import generate
+        from optimizer import build_view, optimize
+        from semantics import analyze
+        ast, _, _ = parse_source(self.source())
+        symtab, semantic_errors = analyze(ast)
+        if any(error.severity == "ERROR" for error in semantic_errors):
+            self.write_console("Semantic errors:\n" + "\n".join(str(error) for error in semantic_errors) + "\n")
+            return
+        quads, functions, types, structs = generate(ast, symtab)
+        view = build_view(optimize(quads, functions, types), self.file_path.name if self.file_path else "untitled.src")
+        for widget, rows, tagged in ((self.opt_before, view["original"], True), (self.opt_after, view["optimized"], False)):
+            widget.config(state="normal"); widget.delete("1.0", "end")
+            for row in rows:
+                tags = (row["status"],) if tagged and row["status"] != "kept" else ()
+                widget.insert("end", f"{row['i']:>3}: {row['text']}\n", tags)
+            widget.config(state="disabled")
+        self.opt_log.delete(0, "end")
+        for t in view["transformations"]:
+            where = f"line {t['line']}: " if t["line"] is not None else ""
+            self.opt_log.insert("end", f"[{t['technique']}] {where}{t['detail']}")
+        stats = view["stats"]; by = stats["by_technique"]
+        self.optimizer_stats.config(text=(f"{stats['original_count']} → {stats['optimized_count']} quads  |  "
+                                          f"removed {stats['removed']}, rewritten {stats['rewritten']}  |  "
+                                          f"const-prop {by.get('constant-propagation', 0)}, "
+                                          f"algebraic {by.get('algebraic-simplification', 0)}, "
+                                          f"DCE {by.get('dead-code-elimination', 0)}"))
+        self.bottom_tabs.select(self.optimizer_frame)
+    def go_to_transformation(self, _event=None):
+        match = re.search(r"line (\d+)", self.opt_log.get("active"))
         if match: self.editor.mark_set("insert", f"{match.group(1)}.0"); self.editor.see("insert"); self.editor.focus_set()
     def run_program(self, debug=False):
         if not self.check_code(): return
