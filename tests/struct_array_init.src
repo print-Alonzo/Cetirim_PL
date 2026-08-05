@@ -1,0 +1,42 @@
+// Feature fixture: struct and array brace-initialization, plus structural
+// equality (==/!=) on both - implemented generically but exercised by none
+// of the 5 required sample programs.
+struct Point {
+    int x;
+    int y;
+};
+
+void main() {
+    var struct Point p1 = {1, 2};
+    var struct Point p2 = {1, 2};
+    var struct Point p3 = {3, 4};
+    var int arr1[3] = {1, 2, 3};
+    var int arr2[3] = {1, 2, 3};
+    var int arr3[3] = {9, 9, 9};
+
+    print(p1.x, p1.y);
+
+    if (p1 == p2) {
+        print("p1 == p2");
+    } else {
+        print("WRONG: p1 != p2");
+    }
+    if (p1 == p3) {
+        print("WRONG: p1 == p3");
+    } else {
+        print("p1 != p3");
+    }
+
+    print(arr1[0], arr1[1], arr1[2]);
+
+    if (arr1 == arr2) {
+        print("arr1 == arr2");
+    } else {
+        print("WRONG: arr1 != arr2");
+    }
+    if (arr1 == arr3) {
+        print("WRONG: arr1 == arr3");
+    } else {
+        print("arr1 != arr3");
+    }
+}

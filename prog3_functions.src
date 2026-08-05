@@ -2,7 +2,7 @@
 // Demonstrates: function declarations, call by value,
 //               array parameters, multiple return values (multi_type, 3+ types),
 //               return statements, recursive function, let declarations,
-//               multiple catch clauses, try without finally, char literal in arithmetic
+//               try without finally, char literal in arithmetic
 
 // ---- Helper: absolute value (call by value) ----
 int abs_val(int x) {
@@ -106,13 +106,10 @@ void main() {
     // Named parameter call (syntax demonstration)
     print(make_greeting(name: "World", count: 0));
 
-    // Multiple catch clauses (catch_list → catch_clause catch_list)
     // try without finally (finally_clause → ε)
     try {
         throw "first error";
     } catch (e1) {
         print("Caught first:", e1);
-    } catch (e2) {
-        print("Caught second:", e2);
     }
 }

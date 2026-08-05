@@ -240,7 +240,12 @@ class CetirimIDE(tk.Tk):
         if not self.check_code(): return
         from ir import generate
         from interpreter import IRExecutor
+        from semantics import analyze
         ast, _, _ = parse_source(self.source())
+        symtab, semantic_errors = analyze(ast)
+        if any(error.severity == "ERROR" for error in semantic_errors):
+            self.write_console("Semantic errors:\n" + "\n".join(str(error) for error in semantic_errors) + "\n")
+            return
         self.console.config(state="normal"); self.console.delete("1.0", "end"); self.console.config(state="disabled")
         self.write_console("$ Running program…\n")
         def request_input(names):
@@ -258,8 +263,8 @@ class CetirimIDE(tk.Tk):
         def execute():
             try:
                 with contextlib.redirect_stdout(TerminalWriter(self)):
-                    quads, functions, types = generate(ast)
-                    IRExecutor(quads, functions, types, input_provider=request_input).run()
+                    quads, functions, types, structs = generate(ast, symtab)
+                    IRExecutor(quads, functions, types, structs, input_provider=request_input).run()
                 self.after(0, self.finish_execution, "\n$ Program finished.\n")
             except Exception as exc:
                 self.after(0, self.finish_execution, f"\nRuntime error: {exc}\n")

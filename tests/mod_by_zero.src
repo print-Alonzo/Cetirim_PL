@@ -1,0 +1,8 @@
+// Negative fixture: modulo by zero is a runtime error, with its own
+// explicit message (distinct from division by zero's).
+void main() {
+    var int a, b;
+    a = 10;
+    b = 0;
+    print(a % b);
+}

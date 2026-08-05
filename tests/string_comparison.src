@@ -1,0 +1,35 @@
+// Feature fixture: comparing two length-1 strings with == no longer routes
+// through char-ordinal promotion (a runtime type-tag ambiguity removed in
+// ir.py/interpreter.py) - it's a plain string comparison, same as any
+// other string. char-vs-char and char-vs-int comparisons still work.
+void main() {
+    var string s1, s2, s3;
+    var char c1, c2;
+
+    s1 = "a";
+    s2 = "a";
+    s3 = "b";
+    c1 = 'a';
+    c2 = 'b';
+
+    if (s1 == s2) {
+        print("s1 == s2");
+    } else {
+        print("WRONG: s1 != s2");
+    }
+    if (s1 == s3) {
+        print("WRONG: s1 == s3");
+    } else {
+        print("s1 != s3");
+    }
+    if (c1 < c2) {
+        print("c1 < c2");
+    } else {
+        print("WRONG: c1 >= c2");
+    }
+    if (c1 < 98) {
+        print("c1 < 98");
+    } else {
+        print("WRONG: c1 >= 98");
+    }
+}

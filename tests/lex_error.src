@@ -1,0 +1,6 @@
+// Negative fixture: an unterminated string literal is a lexical error.
+void main() {
+    var string s;
+    s = "unterminated;
+    print(s);
+}

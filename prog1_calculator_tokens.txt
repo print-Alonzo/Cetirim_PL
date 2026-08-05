@@ -404,7 +404,7 @@
 
   Total tokens  : 304
   Total errors  : 0
-  Scan time     : 1.148 ms
+  Scan time     : 1.017 ms
   Source lines  : 77
   Source chars  : 1797
 
@@ -425,3 +425,4 @@
     CHAR_LIT              2
     FLOAT_LIT             1
     BOOL_LIT              1
+

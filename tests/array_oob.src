@@ -1,0 +1,8 @@
+// Negative fixture: an out-of-bounds array index is a runtime error.
+void main() {
+    var int arr[3];
+    arr[0] = 1;
+    arr[1] = 2;
+    arr[2] = 3;
+    print(arr[5]);
+}

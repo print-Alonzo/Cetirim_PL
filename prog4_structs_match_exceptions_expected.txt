@@ -1,0 +1,16 @@
+Student: Alonzo  ID: 20220001  GPA: 3.75
+Enrolled: true
+Letter grade: A
+Via member .name: Updated GPA: 3.75
+Error: disk full
+Severity: high
+p is false
+Caught exception: Invalid student ID
+Validation routine complete.
+ID 99999 is valid.
+Special chars stored: 
+ 	 "
+Line1
+Line2	Tabbed\Backslash
+p is true and q is false
+At least one is true

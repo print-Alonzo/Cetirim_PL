@@ -1,0 +1,9 @@
+// Negative fixture: unbounded recursion is caught by the VM's call-depth
+// cap (--max-depth, default 10000) and reported as a runtime error rather
+// than hanging or exhausting memory.
+int boom(int n) {
+    return boom(n + 1);
+}
+void main() {
+    print(boom(0));
+}

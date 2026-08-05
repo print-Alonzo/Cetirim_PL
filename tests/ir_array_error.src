@@ -1,0 +1,6 @@
+// Negative fixture: an array with neither an explicit size nor an
+// initializer has nothing to size it from - IR generation error (this is
+// one of the few IRGenError sites semantics.py doesn't already reject).
+void main() {
+    var int arr[];
+}

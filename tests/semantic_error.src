@@ -1,0 +1,5 @@
+// Negative fixture: assigning to an immutable 'val' binding is a semantic error.
+void main() {
+    val int x = 5;
+    x = 10;
+}

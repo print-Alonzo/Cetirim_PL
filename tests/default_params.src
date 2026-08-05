@@ -1,0 +1,15 @@
+// Feature fixture: trailing default parameter values, usable both
+// positionally (omitted trailing args) and by name.
+string greet(string name, string greeting = "Hello", bool loud = false) {
+    if (loud) {
+        return `{greeting}, {name}!!!`;
+    }
+    return `{greeting}, {name}.`;
+}
+
+void main() {
+    print(greet("Alonzo"));
+    print(greet("World", "Hi"));
+    print(greet("Team", "Yo", true));
+    print(greet(name: "Named", loud: true));
+}

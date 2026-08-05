@@ -1,0 +1,11 @@
+// Negative fixture: a second 'catch' clause is a semantic error - catch
+// clauses carry no exception type, so only the first is ever reachable.
+void main() {
+    try {
+        throw "err";
+    } catch (e) {
+        print(e);
+    } catch (e2) {
+        print(e2);
+    }
+}

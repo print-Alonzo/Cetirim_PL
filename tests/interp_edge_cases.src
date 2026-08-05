@@ -1,0 +1,14 @@
+// Feature fixture: two interpolated-string edge cases the scanner now
+// handles correctly - `\{` escapes a literal brace instead of starting an
+// interpolation, and a nested string literal's own `}` inside a `{...}`
+// region doesn't end the region early.
+string f(string s) {
+    return s;
+}
+
+void main() {
+    var int x = 5;
+
+    print(`literal brace: \{x\} and real interp: {x}`);
+    print(`result: {f("}")}`);
+}
