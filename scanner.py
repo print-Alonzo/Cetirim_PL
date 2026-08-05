@@ -733,9 +733,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python scanner.py prog1_calculator.src
-  python scanner.py prog1_calculator.src -o tokens_out.txt
-  python scanner.py prog1_calculator.src --no-src -o tokens_out.txt
+  python scanner.py samples/prog1_calculator.src
+  python scanner.py samples/prog1_calculator.src -o tokens_out.txt
+  python scanner.py samples/prog1_calculator.src --no-src -o tokens_out.txt
         """
     )
     parser.add_argument("source_file", help="Path to source file to tokenize")

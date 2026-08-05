@@ -1,0 +1,28 @@
+// Feature fixture: multi-dimensional arrays are C-style row-major - the
+// *first* bracket is the outer dimension, so `int g[2][3]` is 2 rows of 3
+// (not 3 of 2). The printed shape pins the convention: unequal dims make a
+// flipped nesting fail loudly. Also exercises a dynamic *outer* dimension
+// (`d[n][2]`), the only one that may be non-literal - see
+// tests/dynamic_array.src and tests/dynamic_inner_dim_error.src.
+void main() {
+    var int g[2][3];
+    var int n = 3;
+    var int d[n][2];
+    var int i, j;
+
+    for (i = 0; i < 2; i = i + 1) {
+        for (j = 0; j < 3; j = j + 1) {
+            g[i][j] = i * 3 + j;
+        }
+    }
+    print("g[0][2]:", g[0][2]);
+    print("g[1][0]:", g[1][0]);
+    print("g:", g);
+
+    for (i = 0; i < n; i = i + 1) {
+        for (j = 0; j < 2; j = j + 1) {
+            d[i][j] = i * 2 + j;
+        }
+    }
+    print("d:", d);
+}

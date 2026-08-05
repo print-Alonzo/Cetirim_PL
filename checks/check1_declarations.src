@@ -1,0 +1,191 @@
+// check1_declarations.src
+// Checklist rows: Headers/Comments, Variable Declaration, Arrays,
+//                 Structures/Records, Constant Declaration, Assignment.
+//
+// Every binding form the language has (const / val / var / let), every
+// composite type it can build (array, struct, typedef), and every
+// spelling of assignment (simple, multi-assign, destructuring, discard).
+
+/* --------------------------------------------------------------------
+   This is the scanner's second comment form. A line comment runs to the
+   end of the line; this one spans lines. Block comments do not nest.
+   -------------------------------------------------------------------- */
+
+// ---- Constant Declaration: one per scalar type. A const lives at global
+//      scope only, and its initializer must be a bare literal. ----
+const int MAX_STUDENTS = 3;
+const float PI = 3.14159;
+const char GRADE_SEP = ':';
+const string COURSE = "CSC617M";
+const bool DEBUG = false;
+
+// ---- Structures/Records ----
+
+// Several declarators may share one field line.
+struct Point {
+    int x, y;
+};
+
+// A record whose fields include another struct and an array, so the
+// interpreter has to build a nested default value, not a flat one.
+struct Student {
+    string name;
+    int id;
+    float gpa;
+    bool enrolled;
+    struct Point seat;
+    int scores[3];
+};
+
+// ---- typedef: all three forms ----
+typedef int StudentID;                              // alias a primitive
+typedef struct Color { int r; int g; int b; } RGB;  // define + alias
+typedef struct Point Coordinate;                    // alias a struct
+
+void main() {
+    // ================= DECLARATION SECTION =================
+    // Every declaration in a block must precede the first statement.
+
+    // ---- var: mutable; with no initializer it is zero-initialized ----
+    var int count;
+    var float average;
+    var char initial;
+    var string label;
+    var bool passing;
+
+    // ---- val: immutable binding, initializer required; several per line ----
+    val int lo = 1, hi = 9;
+    val string title = "Enrollment Report";
+
+    // ---- let: mutable, type inferred from the initializer ----
+    let total = 0;
+    let ratio = 0.5;
+
+    // ---- Arrays ----
+    val int primes[4] = {2, 3, 5, 7};   // literal size + initializer list
+    var int buf[5];                     // zero-filled
+    var int grid[3][3];                 // two-dimensional
+    var int n = 4;                      // a runtime value...
+    var int dyn[n];                     // ...used as the array's size
+
+    // ---- Structs, and the composites built out of them ----
+    var struct Student s;
+    var struct Student roster[2];       // array of structs
+    var RGB accent;                     // typedef'd struct
+    var Coordinate corner;              // alias of an existing struct
+    var StudentID sid;                  // alias of int
+
+    // ---- let destructuring, including a discarded position ----
+    let width, height = 800, 600;
+    let quotient, _ = 17, 2;
+
+    var int i, j;
+
+    // ================= STATEMENT SECTION =================
+
+    print("---- Constants ----");
+    print("MAX_STUDENTS:", MAX_STUDENTS, "PI:", PI);
+    print("GRADE_SEP:", GRADE_SEP, "COURSE:", COURSE, "DEBUG:", DEBUG);
+
+    // ---- Assignment: simple scalar assignment, one per type ----
+    print("---- Scalar declaration and assignment ----");
+    count = MAX_STUDENTS;
+    average = PI;
+    initial = 'A';
+    label = COURSE;
+    passing = true;
+    print("count:", count, "average:", average);
+    print("initial:", initial, "label:", label, "passing:", passing);
+    print("val lo/hi:", lo, hi, "title:", title);
+    print("let total/ratio:", total, ratio);
+
+    // A var left uninitialized holds its type's zero value; reassigning
+    // a let or a var is allowed, reassigning a val or const is not.
+    total = total + 10;
+    print("let after reassignment:", total);
+
+    // ---- Assignment: array elements ----
+    print("---- Arrays ----");
+    print("primes:", primes[0], primes[1], primes[2], primes[3]);
+
+    for (i = 0; i < 5; i = i + 1) {
+        buf[i] = (i + 1) * 10;
+    }
+    print("buf:", buf[0], buf[1], buf[2], buf[3], buf[4]);
+
+    for (i = 0; i < 3; i = i + 1) {
+        for (j = 0; j < 3; j = j + 1) {
+            grid[i][j] = i * 3 + j;
+        }
+    }
+    print("grid row 0:", grid[0][0], grid[0][1], grid[0][2]);
+    print("grid row 1:", grid[1][0], grid[1][1], grid[1][2]);
+    print("grid row 2:", grid[2][0], grid[2][1], grid[2][2]);
+    print("whole grid:", grid);
+
+    for (i = 0; i < n; i = i + 1) {
+        dyn[i] = n - i;
+    }
+    print("dyn, size computed at runtime from n =", n, "->", dyn);
+
+    // A val freezes the binding, not the contents: writing through the
+    // name into an element is allowed.
+    primes[3] = 11;
+    print("primes[3] mutated through a val binding:", primes[3]);
+
+    // ---- Assignment: struct fields, nested fields, array fields ----
+    print("---- Structures / records ----");
+    s.name = "Alonzo";
+    s.id = 20220001;
+    s.gpa = 3.75;
+    s.enrolled = true;
+    s.seat.x = 4;           // field of a struct-typed field
+    s.seat.y = 12;
+    s.scores[0] = 95;       // element of an array-typed field
+    s.scores[1] = 82;
+    s.scores[2] = 77;
+    print("student:", s.name, "id:", s.id, "gpa:", s.gpa);
+    print("enrolled:", s.enrolled, "seat:", s.seat.x, s.seat.y);
+    print("scores:", s.scores[0], s.scores[1], s.scores[2]);
+
+    // Array of structs: each slot is its own record, not a shared alias.
+    roster[0].name = "Bianca";
+    roster[0].id = 20220002;
+    roster[1].name = "Carlo";
+    roster[1].id = 20220003;
+    print("roster[0]:", roster[0].name, roster[0].id);
+    print("roster[1]:", roster[1].name, roster[1].id);
+
+    // ---- typedef aliases behave exactly as the types they name ----
+    accent.r = 255;
+    accent.g = 128;
+    accent.b = 0;
+    corner.x = -1;
+    corner.y = -1;
+    sid = 20220004;
+    print("RGB accent:", accent.r, accent.g, accent.b);
+    print("Coordinate corner:", corner.x, corner.y);
+    print("StudentID sid:", sid);
+
+    // ---- Assignment: the multi-value spellings ----
+    print("---- Multiple assignment ----");
+    print("let destructuring:", width, height);
+    print("let with a discarded position:", quotient);
+
+    // Typed multiple assignment is a statement, not a declaration, so it
+    // has to come after every declaration in this block.
+    int a, b = 3, 4;
+    print("typed multi-assign (shared type):", a, b);
+
+    int p, int q = 5, 6;
+    print("typed multi-assign (type per name):", p, q);
+
+    // The typed form can discard a position too.
+    int kept, int _ = 7, 8;
+    print("typed multi-assign with a discard:", kept);
+
+    // Chained plain assignment through separate statements.
+    count = 0;
+    count = count + MAX_STUDENTS;
+    print("count after arithmetic assignment:", count);
+}

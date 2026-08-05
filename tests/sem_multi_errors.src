@@ -1,0 +1,26 @@
+// Negative fixture: error recovery in the semantic analyser.
+// Five *different* mistakes in one file. The analyser is expected to report
+// all of them in one run rather than stopping at the first, which is what
+// the checklist's "Error Recovery" and "Informativeness" rows ask for.
+//
+//   1. constant reassignment      (LIMIT = 99)
+//   2. undeclared variable        (mystery)
+//   3. type mismatch              (name = 42)
+//   4. multiply-defined variable  (dup declared twice)
+//   5. wrong argument count       (twice() called with two arguments)
+const int LIMIT = 10;
+
+int twice(int n) {
+    return n * 2;
+}
+
+void main() {
+    var int dup;
+    var string dup;
+    var string name;
+
+    LIMIT = 99;
+    print(mystery);
+    name = 42;
+    print(twice(3, 4));
+}

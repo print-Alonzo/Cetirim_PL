@@ -1,0 +1,149 @@
+// prog4_structs_match_exceptions.src
+// Demonstrates: struct, typedef (alias & inline struct def), empty struct body,
+//               match statement (with relational pattern, no wildcard),
+//               match expression, struct member access (.),
+//               guard, try/catch/finally, try without finally,
+//               throw, string & char literals, escape sequences,
+//               interpolated strings, bool type
+
+// ---- Typedef with inline struct definition (typedef struct_def identifier) ----
+typedef struct Color { int r; int g; int b; } RGB;
+
+// ---- Empty struct body (field_list → ε) ----
+struct Tag {};
+
+// ---- Struct: Student record ----
+struct Student {
+    string name;
+    int id;
+    float gpa;
+    bool enrolled;
+};
+
+// ---- Typedef: alias for int ----
+typedef int StudentID;
+
+// ---- Typedef wrapping a struct ----
+typedef struct Student StudentRecord;
+
+// ---- Returns a letter grade using if-else ----
+string grade_letter(float gpa) {
+    if (gpa >= 3.5) {
+        return "A";
+    } else {
+        if (gpa >= 3.0) {
+            return "B";
+        } else {
+            if (gpa >= 2.5) {
+                return "C";
+            } else {
+                if (gpa >= 2.0) {
+                    return "D";
+                } else {
+                    return "F";
+                }
+            }
+        }
+    }
+}
+
+// ---- Validates a student ID; throws on bad input ----
+void validate_id(StudentID id) {
+    guard (id > 0 && id <= 99999) else {
+        throw "Invalid student ID";
+    }
+    print("ID", id, "is valid.");
+}
+
+// ---- Processes a status code using match statement ----
+void handle_status(int code) {
+    match (code) {
+        0 => print("OK");
+        1 => print("Warning: low memory");
+        2 => print("Error: disk full");
+        3..9 => print("Unknown error code");
+        code > 9 => print("Very high error code");
+        _ => print("Unrecognized code");
+    }
+}
+
+void main() {
+    var struct Student s1;
+    var string info, grade, msg, severity;
+    var int status;
+    var char newline, tab, quote;
+    var bool p, q;
+
+    // Struct instantiation
+    s1.name = "Alonzo";
+    s1.id = 20220001;
+    s1.gpa = 3.75;
+    s1.enrolled = true;
+
+    // Interpolated string with struct fields
+    info = `Student: {s1.name}  ID: {s1.id}  GPA: {s1.gpa}`;
+    print(info);
+    print("Enrolled:", s1.enrolled);
+
+    // Match expression for grade
+    grade = grade_letter(s1.gpa);
+    print("Letter grade:", grade);
+
+    // Struct member access via . (lvalue and expression forms)
+    s1.name = "Updated";
+    print("Via member .name:", s1.name, "GPA:", s1.gpa);
+
+    // Match statement on integer
+    status = 2;
+    handle_status(status);
+
+    // Match expression (match_expr — match used as a value)
+    severity = match (status) {
+        0 => "low",
+        1 => "medium",
+        _ => "high"
+    };
+    print("Severity:", severity);
+
+    // Match statement without wildcard (match_default → ε)
+    match (p) {
+        true => print("p is true");
+        false => print("p is false");
+    }
+
+    try {
+        validate_id(20220001);   // valid
+        validate_id(-5);         // throws
+    } catch (e) {
+        print("Caught exception:", e);
+    } finally {
+        print("Validation routine complete.");
+    }
+
+    // try/catch without finally (finally_clause → ε)
+    try {
+        validate_id(99999);
+    } catch (ex) {
+        print("Validation passed or caught:", ex);
+    }
+
+    // Char literals and escape sequences
+    newline = '\n';
+    tab = '\t';
+    quote = '\"';
+    print("Special chars stored:", newline, tab, quote);
+
+    // String with escape sequences
+    msg = "Line1\nLine2\tTabbed\\Backslash";
+    print(msg);
+
+    // Boolean logic
+    p = true;
+    q = false;
+    if (p && !q) {
+        print("p is true and q is false");
+    }
+    if (p || q) {
+        print("At least one is true");
+    }
+}

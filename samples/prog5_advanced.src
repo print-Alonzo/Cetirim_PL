@@ -1,0 +1,155 @@
+// prog5_advanced.src
+// Demonstrates: multi-assignment,
+//               let destructuring, complex boolean & arithmetic expressions,
+//               nested loops/conditionals, multi-line comments,
+//               all remaining constructs not shown in prior programs,
+//               all four multi_assign statement forms (shared_type_lvalue,
+//               multi_lvalue, each with func_call_expr and expr_list)
+
+// ---- Increment by returning the new value ----
+int increment(int n) {
+    return n + 1;
+}
+
+// ---- Double a value ----
+int double_value(int n) {
+    return n * 2;
+}
+
+// ---- Multi-return: quotient and remainder ----
+(int, int) divmod(int a, int b) {
+    return a / b, a % b;
+}
+
+// ---- Demonstrates nested match + guard + complex expressions ----
+string classify_number(int n) {
+    var int abs_n;
+    var string sign, parity;
+
+    guard (n != 0) else {
+        return "zero";
+    }
+
+    if (n > 0) {
+        sign = "positive";
+    } else {
+        sign = "negative";
+    }
+
+    if (n < 0) {
+        abs_n = -n;
+    } else {
+        abs_n = n;
+    }
+
+    if (abs_n % 2 == 0) {
+        parity = "even";
+    } else {
+        parity = "odd";
+    }
+
+    return `{sign} {parity}`;
+}
+
+// ---- Demonstrates complex nested loops with continue/break ----
+void print_multiplication_table(int size) {
+    var int r, c, product;
+    for (r = 1; r <= size; r = r + 1) {
+        for (c = 1; c <= size; c = c + 1) {
+            product = r * c;
+            if (product > 50) {
+                break;             // inner break
+            }
+            print(r, "x", c, "=", product);
+        }
+        if (r == 4) {
+            continue;              // outer continue
+        }
+    }
+}
+
+void main() {
+    var int counter;
+    let q, r = divmod(17, 5);
+    let x, y, z = 10, 20, 30;
+    var float result;
+    var bool flag;
+    var int a, b;
+    var int attempts;
+
+    // ---- Value-returning helpers ----
+    counter = 0;
+    counter = increment(counter);
+    counter = increment(counter);
+    print("Counter after 2 increments:", counter);
+
+    counter = counter + 10;
+    print("Counter after add:", counter);
+
+    counter = double_value(counter);
+    print("Counter after doubling:", counter);
+
+    // ---- multi_assign: shared_type_lvalue = func_call_expr ----
+    int a3, b3 = divmod(10, 3);
+    print("shared/func: a3 =", a3, " b3 =", b3);
+
+    // ---- multi_assign: shared_type_lvalue = expr_list ----
+    int c3, d3 = 8, 4;
+    print("shared/expr: c3 =", c3, " d3 =", d3);
+
+    // ---- multi_assign: multi_lvalue = func_call_expr ----
+    int q2, int r2 = divmod(17, 5);
+    print("multi/func: q2 =", q2, " r2 =", r2);
+
+    // ---- multi_assign: multi_lvalue = expr_list ----
+    int q3, int r3 = 3, 1;
+    print("multi/expr: q3 =", q3, " r3 =", r3);
+
+    // ---- Multi-assignment from function (let form) ----
+    print("17 div 5: quotient =", q, " remainder =", r);
+
+    // ---- let with expression list (no function call) ----
+    print("x =", x, "y =", y, "z =", z);
+
+    // ---- Complex arithmetic expression ----
+    result = (x + y) * z / (x - 5) + 3.0;
+    print("Complex expr result:", result);
+
+    // ---- Complex boolean expression ----
+    flag = (x > 5 && y < 100) || (z == 30 && !(x == y));
+    if (flag) {
+        print("Complex bool: true");
+    }
+
+    // ---- classify_number with various inputs ----
+    print(classify_number(0));
+    print(classify_number(7));
+    print(classify_number(-4));
+    print(classify_number(12));
+
+    // ---- Multiplication table (nested loops, break, continue) ----
+    print("--- Multiplication Table (products <= 50) ---");
+    print_multiplication_table(5);
+
+    // ---- While with complex condition ----
+    a = 1;
+    b = 100;
+    while (a < b && (a % 7 != 0 || b % 3 != 0)) {
+        a = a + 1;
+        b = b - 1;
+    }
+    print("While exit: a =", a, " b =", b);
+
+    // ---- Repeat-until with guard inside ----
+    attempts = 0;
+    repeat {
+        attempts = attempts + 1;
+        guard (attempts < 10) else {
+            print("Too many attempts, aborting.");
+            break;
+        }
+        print("Attempt", attempts);
+    } until (attempts >= 3);
+
+    print("Done.");
+}

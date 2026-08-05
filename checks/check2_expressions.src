@@ -1,0 +1,180 @@
+// check2_expressions.src
+// Checklist rows: Math Expr (Simple, Complex), Boolean Expr (Simple,
+//                 Complex/Simple Logical, Multiple/Complex Logical),
+//                 and section 5 "Flexibility and Robustness of Expressions".
+//
+// The five tiers below are labelled (a)..(e) to match the rubric's own
+// expression hierarchy, in its order. Every result is printed, so the
+// interpreter column is checked by the golden output and not just the
+// parser's willingness to accept the syntax.
+
+const int BASE = 34;
+const int SCALE = 234;
+
+struct Point {
+    int x, y;
+};
+
+// Operands for the complex tiers: a call, an array element, and a struct
+// field all have to be usable inside one arithmetic expression.
+int func1(int a, int b, int c) {
+    return a + b * c;
+}
+
+int weight(int n) {
+    return n * 2 + 1;
+}
+
+// Prints when it runs, so a short-circuited call is visible by its silence.
+bool noisy(bool v) {
+    print("      [noisy() actually ran]");
+    return v;
+}
+
+void main() {
+    var int x, y, z32;
+    var int sm1, sm2, sm3, sm4, sm5;
+    var float sf1;
+    var int cm1, cm2, cm3;
+    var float cf1, cf2;
+    var bool sb1, sb2, sb3, sb4, sb5, sb6, sb7, sb8;
+    var bool cb1, cb2, cb3;
+    var bool cl1, cl2, cl3;
+    val int arr[5] = {10, 20, 30, 40, 50};
+    var struct Point pt;
+
+    x = 10;
+    y = 20;
+    z32 = 30;
+    pt.x = 3;
+    pt.y = 4;
+
+    print("operands:  x =", x, " y =", y, " z32 =", z32);
+    print("           arr =", arr, " pt = (", pt.x, ",", pt.y, ")");
+    print("           BASE =", BASE, " SCALE =", SCALE);
+    print("");
+
+    // =================================================================
+    // (a) simple_math  --  x = id + num;  x = id * id;  x = num / num;
+    // =================================================================
+    print("---- (a) simple math ----");
+
+    sm1 = z32 + 7;          // id + num
+    sm2 = z32 * y;          // id * id
+    sf1 = 9.0 / 2.0;        // num / num
+    sm3 = z32 - 3;          // id - num
+    sm4 = 17 % 5;           // num % num
+    sm5 = 7 / 2;            // integer division truncates toward zero
+
+    print("z32 + 7   =", sm1);
+    print("z32 * y   =", sm2);
+    print("9.0 / 2.0 =", sf1);
+    print("z32 - 3   =", sm3);
+    print("17 % 5    =", sm4);
+    print("7 / 2     =", sm5, "(int division truncates; use 7 / 2.0 for 3.5)");
+    print("unary minus and plus:", -x, +x);
+    print("");
+
+    // =================================================================
+    // (b) complex_math -- nested simple_math, and simple math combined
+    //     with function calls, array elements and struct fields.
+    // =================================================================
+    print("---- (b) complex math ----");
+
+    // The rubric's own example shape: call + literal arithmetic + id.
+    cm1 = func1(23, 4, 5) + BASE / SCALE * z32;
+    print("func1(23,4,5) + BASE / SCALE * z32 =", cm1);
+    print("   func1(23,4,5) =", func1(23, 4, 5),
+          "and BASE / SCALE =", BASE / SCALE, "(integer division -> 0)");
+
+    // Call, array element and struct field all inside one expression.
+    cm2 = func1(2, 3, 4) + arr[2] * pt.x - weight(arr[0]) / 2;
+    print("func1(2,3,4) + arr[2] * pt.x - weight(arr[0]) / 2 =", cm2);
+
+    // Nested simple_math: parenthesised sub-expressions feeding each other.
+    cm3 = ((sm1 + sm3) * 2 - arr[1]) / (pt.y + 1);
+    print("((sm1 + sm3) * 2 - arr[1]) / (pt.y + 1) =", cm3);
+
+    // Mixed int/float arithmetic, with the int operands promoted.
+    cf1 = (x + y) * 1.0 / (z32 - 5) + 3.0;
+    print("(x + y) * 1.0 / (z32 - 5) + 3.0 =", cf1);
+
+    cf2 = BASE / 8.0 * 2.0;
+    print("BASE / 8.0 * 2.0 =", cf2, "(a float operand keeps the fraction)");
+
+    // A call whose own arguments are complex_math expressions.
+    print("func1(arr[1] / 4, pt.y, weight(pt.x)) =",
+          func1(arr[1] / 4, pt.y, weight(pt.x)));
+    print("");
+
+    // =================================================================
+    // (c) simple boolean -- ( simple_math rel_op simple_math ), every
+    //     relational operator, plus unary !.
+    // =================================================================
+    print("---- (c) simple boolean ----");
+
+    sb1 = z32 < 100;
+    sb2 = z32 > 5;
+    sb3 = z32 <= 30;
+    sb4 = z32 >= 31;
+    sb5 = z32 == 30;
+    sb6 = z32 != 31;
+    sb7 = !(z32 == 31);
+    // ( complex_math rel_op complex_math )
+    sb8 = (func1(1, 2, 3) + arr[1] * 2) > (weight(pt.x) - BASE / 4);
+
+    print("z32 < 100   =", sb1);
+    print("z32 > 5     =", sb2);
+    print("z32 <= 30   =", sb3);
+    print("z32 >= 31   =", sb4);
+    print("z32 == 30   =", sb5);
+    print("z32 != 31   =", sb6);
+    print("!(z32 == 31) =", sb7);
+    print("(func1(1,2,3) + arr[1] * 2) > (weight(pt.x) - BASE / 4) =", sb8);
+    print("");
+
+    // =================================================================
+    // (d) complex_boolean -- ( simple_boolean logical_op simple_boolean )
+    // =================================================================
+    print("---- (d) complex boolean ----");
+
+    cb1 = (x > 5) && (y < 100);
+    cb2 = (x > 5) || (y < 0);
+    cb3 = (x >= 10) && (y == 20) && (z32 != 0);
+
+    print("(x > 5) && (y < 100)               =", cb1);
+    print("(x > 5) || (y < 0)                 =", cb2);
+    print("(x >= 10) && (y == 20) && (z32 != 0) =", cb3);
+    print("");
+
+    // =================================================================
+    // (e) Complex_Logical -- nested complex_boolean, mixing complex_math
+    //     operands, several logical operators and a negated group.
+    // =================================================================
+    print("---- (e) complex logical ----");
+
+    cl1 = ((func1(1, 2, 3) + arr[0] > pt.x * 2) && !(y % 3 == 0))
+          || (z32 <= 30 && !(x > 1000));
+    print("((func1(1,2,3) + arr[0] > pt.x * 2) && !(y % 3 == 0))"
+          , "|| (z32 <= 30 && !(x > 1000)) =", cl1);
+
+    cl2 = (arr[4] - 50 > 0 && !(pt.y >= 4)) || (!(z32 == 30) && sm4 != 2);
+    print("(arr[4] - 50 > 0 && !(pt.y >= 4)) || (!(z32 == 30) && sm4 != 2) =", cl2);
+
+    cl3 = !((x + y < z32) || (weight(pt.y) % 2 == 0)) && (arr[3] / 4 == 10);
+    print("!((x + y < z32) || (weight(pt.y) % 2 == 0)) && (arr[3] / 4 == 10) =", cl3);
+    print("");
+
+    // ---- && and || short-circuit: the right operand is not evaluated
+    //      when the left already decides the answer. ----
+    print("---- short-circuit evaluation ----");
+    print("false && noisy(true):");
+    cb1 = false && noisy(true);
+    print("   result", cb1, "- noisy() stayed silent, so it never ran");
+    print("true || noisy(true):");
+    cb2 = true || noisy(true);
+    print("   result", cb2, "- again skipped");
+    print("true && noisy(false):");
+    cb3 = true && noisy(false);
+    print("   result", cb3, "- here the right operand had to be evaluated");
+}

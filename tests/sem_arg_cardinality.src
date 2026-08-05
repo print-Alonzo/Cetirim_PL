@@ -1,0 +1,10 @@
+// Negative fixture: checklist semantic error 5 - cardinality/ordinality of
+// function parameters. `add3` takes three arguments and none of them has a
+// default, so a two-argument call cannot be completed.
+int add3(int a, int b, int c) {
+    return a + b + c;
+}
+
+void main() {
+    print(add3(1, 2));
+}
