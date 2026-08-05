@@ -425,9 +425,14 @@ class CetirimIDE(tk.Tk):
             ttk.Button(left, text=text, command=callback, style="Ghost.TButton").pack(side="left")
         # Transport stays visible but disabled while nothing is running, so
         # the debugger's controls are discoverable before a session starts.
-        self.step_btn = ttk.Button(right, text="Step", command=self.debug_step,
+        # "In"/"Over" are named rather than just "Step" so the two trace
+        # modes read as the pair they are.
+        self.step_btn = ttk.Button(right, text="Step In", command=self.debug_step,
                                    state="disabled", style="Ghost.TButton")
         self.step_btn.pack(side="left")
+        self.step_over_btn = ttk.Button(right, text="Step Over", command=self.debug_step_over,
+                                        state="disabled", style="Ghost.TButton")
+        self.step_over_btn.pack(side="left")
         self.continue_btn = ttk.Button(right, text="Continue", command=self.debug_continue,
                                        state="disabled", style="Ghost.TButton")
         self.continue_btn.pack(side="left")
@@ -699,7 +704,7 @@ class CetirimIDE(tk.Tk):
         hint = ttk.Frame(frame, padding=(14, 8, 14, 4), style="Panel.TFrame")
         hint.pack(fill="x")
         ttk.Label(hint, text="Click a line number to toggle a breakpoint, then Debug.  ·  "
-                            "Step and Continue are in the toolbar.  ·  "
+                            "Step In (F8) enters calls, Step Over (F10) runs them through.  ·  "
                             "Double-click a watch to remove it.",
                   style="Hint.TLabel").pack(side="left")
         panes = ttk.Frame(frame, style="Panel.TFrame")
@@ -817,7 +822,8 @@ class CetirimIDE(tk.Tk):
                                      ("Symbol table", self.show_symbols, "")):
             tools.add_command(label=label, command=callback, accelerator=key)
         tools.add_separator()
-        for label, callback, key in (("Step", self.debug_step, "F8"),
+        for label, callback, key in (("Step in", self.debug_step, "F8"),
+                                     ("Step over", self.debug_step_over, "F10"),
                                      ("Continue", self.debug_continue, "F9"),
                                      ("Stop", self.debug_stop, "Shift+F5")):
             tools.add_command(label=label, command=callback, accelerator=key)
@@ -849,6 +855,7 @@ class CetirimIDE(tk.Tk):
             "<F7>": lambda e: self.check_code(),
             "<F8>": lambda e: self.debug_step(),
             "<F9>": lambda e: self.debug_continue(),
+            "<F10>": lambda e: self.debug_step_over(),
             "<Control-space>": self.show_suggestions,
         }
         for sequence, callback in bindings.items():
@@ -1710,9 +1717,15 @@ class CetirimIDE(tk.Tk):
     def on_debug_pause(self, line):
         self.highlight_current_line(line)
         self.refresh_debug_panels()
-        self.step_btn.config(state="normal")
-        self.continue_btn.config(state="normal")
+        self._set_transport("normal")
         self.set_run_status(f"Paused at line {line}", THEME["warn"])
+
+    def _set_transport(self, state):
+        """Enable/disable the resume controls together - they are only ever
+        meaningful while the executor is parked in `_check_pause`, and any
+        of them leaving that state retires all three."""
+        for button in (self.step_btn, self.step_over_btn, self.continue_btn):
+            button.config(state=state)
 
     def append_trace(self, line):
         executor = self.executor
@@ -1790,18 +1803,25 @@ class CetirimIDE(tk.Tk):
         self.editor.tag_remove("current_line", "1.0", "end")
 
     def debug_step(self):
+        """Trace one line, entering any function it calls."""
         if not self.executor:
             return
-        self.step_btn.config(state="disabled")
-        self.continue_btn.config(state="disabled")
+        self._set_transport("disabled")
         self.executor.dbg_step()
+
+    def debug_step_over(self):
+        """Trace one line, running any function it calls to completion
+        rather than stopping inside it."""
+        if not self.executor:
+            return
+        self._set_transport("disabled")
+        self.executor.dbg_step_over()
 
     def debug_continue(self):
         if not self.executor:
             return
         self.clear_current_line()
-        self.step_btn.config(state="disabled")
-        self.continue_btn.config(state="disabled")
+        self._set_transport("disabled")
         self.set_run_status("Running…", THEME["accent"])
         self.executor.dbg_continue()
 
@@ -1848,8 +1868,7 @@ class CetirimIDE(tk.Tk):
         self.terminal_send.config(state="disabled")
         self.pending_input = None
         self.clear_current_line()
-        self.step_btn.config(state="disabled")
-        self.continue_btn.config(state="disabled")
+        self._set_transport("disabled")
         self.stop_btn.config(state="disabled")
         self.set_run_status("")
         self.executor = None

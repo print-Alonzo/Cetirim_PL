@@ -444,7 +444,7 @@ def driver():
     # ---- Test 18: debugger transport lives in the toolbar, idle by default --
     check("transport buttons are disabled with no run in flight",
           all(str(b.cget("state")) == "disabled"
-              for b in (ide.step_btn, ide.continue_btn, ide.stop_btn)))
+              for b in (ide.step_btn, ide.step_over_btn, ide.continue_btn, ide.stop_btn)))
     check("transport buttons sit in the header, not inside the bottom panel",
           not str(ide.step_btn).startswith(str(ide.bottom_tabs)),
           f"{ide.step_btn} vs {ide.bottom_tabs}")
@@ -525,6 +525,74 @@ def driver():
           and int(ide.font_editor_italic.cget("size")) == base + 2,
           f"bold={ide.font_editor_bold.cget('size')} italic={ide.font_editor_italic.cget('size')}")
     ide.change_font_size(-2)
+
+    # ---- Test 21: the two trace modes - Step In vs Step Over ---------------
+    # samples/prog3_functions.src line 88 is `int sx, sy = swap(x, y);` and
+    # swap's body is line 17, so the whole difference between the modes is
+    # which of those the next pause lands on. Both runs break on 87 and step
+    # once to reach 88, rather than breaking on 88 directly: a call statement's
+    # own line is revisited after RETURN (the quads that store the result carry
+    # it too), so a breakpoint there would fire a second time on the way back
+    # and mask what the step itself did.
+    load(prog3.read_text(encoding="utf-8"), prog3)
+    ide.breakpoints.clear()
+    ide.breakpoints.add(87)
+    ide.debug_program()
+    ok = yield (paused_at(87), 30, "pause at 87 before the step-in test")
+    if ok:
+        ide.debug_step()
+        ok = yield (paused_at(88), 30, "step to the call on line 88")
+        if ok:
+            ide.debug_step()
+            ok = yield (paused_at(17), 30, "step in reaches swap's body")
+            check("Step In descends into the called function", ok)
+            check("call stack shows swap above main after stepping in",
+                  tree_texts(ide.callstack_list) == ["swap", "main"],
+                  repr(tree_texts(ide.callstack_list)))
+        ide.breakpoints.clear()
+        ide.debug_continue()
+        yield (finished, 30, "finish after the step-in test")
+
+    load(prog3.read_text(encoding="utf-8"), prog3)
+    ide.breakpoints.clear()
+    ide.breakpoints.add(87)
+    ide.debug_program()
+    ok = yield (paused_at(87), 30, "pause at 87 before the step-over test")
+    if ok:
+        ide.debug_step()
+        ok = yield (paused_at(88), 30, "step to the call before stepping over it")
+        if ok:
+            ide.debug_step_over()
+            ok = yield (paused_at(89), 30, "step over lands on line 89")
+            check("Step Over runs the call through to the next line", ok)
+            check("Step Over never left main's frame",
+                  tree_texts(ide.callstack_list) == ["main"],
+                  repr(tree_texts(ide.callstack_list)))
+            var_rows = tree_pairs(ide.vars_list)
+            check("Step Over still applied the call's results (sx = 20, sy = 10)",
+                  "sx = 20" in var_rows and "sy = 10" in var_rows, repr(var_rows))
+        ide.breakpoints.clear()
+        ide.debug_continue()
+        yield (finished, 30, "finish after the step-over test")
+        check("a stepped-over debug run still produces the full program output",
+              expected3 in console_text(), repr(console_text()[:200]))
+
+    # A breakpoint inside a function being stepped over still wins: the
+    # stepping state gates only the step's own pause, never a breakpoint's.
+    load(prog3.read_text(encoding="utf-8"), prog3)
+    ide.breakpoints.clear()
+    ide.breakpoints.update({91, 25})  # the array_sum(...) call, and a line in its loop
+    ide.debug_program()
+    ok = yield (paused_at(91), 30, "pause at the array_sum call")
+    if ok:
+        ide.debug_step_over()
+        ok = yield (paused_at(25), 30, "breakpoint inside the stepped-over call")
+        check("a breakpoint inside a stepped-over function still pauses", ok)
+        ide.breakpoints.clear()
+        ide.debug_continue()
+        yield (finished, 30, "finish after the breakpoint-in-step-over test")
+    check("Step Over goes idle again once the run ends",
+          str(ide.step_over_btn.cget("state")) == "disabled")
 
 
 gen = driver()
