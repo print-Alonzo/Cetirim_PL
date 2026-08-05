@@ -259,6 +259,56 @@ def driver():
           repr(list(ide.callstack_list.get(0, "end"))))
     ide.executor = None
 
+    # ---- Test 13: find/replace bar -----------------------------------------
+    load("void main() {\n    print(1);\n    print(2);\n}\n")
+    ide.show_find_bar()
+    ide.find_entry.delete(0, "end")
+    ide.find_entry.insert(0, "print")
+    ide._find_refresh(force=True)
+    n_matches = len(ide.editor.tag_ranges("find_match")) // 2  # ranges come as start/end pairs
+    check("find bar highlights every match", n_matches == 2, f"got {n_matches} matches")
+    ide.find_next()
+    check("find-next selects a current match", bool(ide.editor.tag_ranges("find_current")))
+    ide.replace_entry.delete(0, "end")
+    ide.replace_entry.insert(0, "write")
+    ide.replace_all()
+    check("replace-all rewrites every match",
+          ide.source().count("write") == 2 and "print" not in ide.source(), repr(ide.source()))
+    ide.hide_find_bar()
+    check("hiding the find bar clears its highlights",
+          not ide.editor.tag_ranges("find_match") and not ide.editor.tag_ranges("find_current"))
+
+    # ---- Test 14: Symbols tab shows the semantic analyzer's symbol table ---
+    load(prog3.read_text(encoding="utf-8"), prog3)
+    ide.check_code()
+    problems_rows = list(ide.problems.get(0, "end"))
+    check("problems shows the ✓ all-clear row on a clean program",
+          bool(problems_rows) and problems_rows[0].startswith("✓"), repr(problems_rows))
+    roots = {ide.symbols_tree.item(i, "text"): i for i in ide.symbols_tree.get_children()}
+    check("symbol table lists a Functions root", "Functions" in roots, repr(list(roots)))
+    if "Functions" in roots:
+        func_items = ide.symbols_tree.get_children(roots["Functions"])
+        func_names = [ide.symbols_tree.item(i, "text") for i in func_items]
+        check("symbol table lists main()", any(t.startswith("main(") for t in func_names), repr(func_names))
+        main_items = [i for i in func_items if ide.symbols_tree.item(i, "text").startswith("main(")]
+        if main_items:
+            details = [str(ide.symbols_tree.item(i, "values")) for i in ide.symbols_tree.get_children(main_items[0])]
+            check("main's locals expose their unique ir names",
+                  any("ir: main." in d for d in details), repr(details[:4]))
+
+    # ---- Test 15: paused status segment survives the debounced refresh -----
+    ide.breakpoints.clear()
+    ide.breakpoints.add(87)
+    ide.debug_program()
+    ok = yield (paused_at(87), 30, "pause for the status-segment test")
+    if ok:
+        ide._refresh_all()  # used to clobber "Paused at line N" when it lived in the single status label
+        check("paused status survives a debounced refresh",
+              ide.status_run.cget("text") == "Paused at line 87", repr(ide.status_run.cget("text")))
+        ide.debug_stop()
+        yield (finished, 30, "stop after the status-segment test")
+    ide.breakpoints.clear()
+
 
 gen = driver()
 state = {}
