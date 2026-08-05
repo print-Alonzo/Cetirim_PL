@@ -38,59 +38,151 @@ TEMPLATES = {
     "variable": "var int ${name} = ${value};${cursor}",
 }
 
-# One place for every color in the IDE (VS Code Dark+-inspired). All widget
-# construction and every ttk style reads from this dict - no hex literal may
-# appear anywhere else in the file.
+# Every diagnostic in the pipeline prints as "[TAG] Line N, Col C: message"
+# (the position is omitted for a whole-program semantic error), so one regex
+# splits any of them into the Problems table's three columns.
+DIAGNOSTIC = re.compile(r"^\[(?P<tag>[A-Z ]+)\]\s*(?:Line (?P<line>\d+), Col (?P<col>\d+):\s*)?(?P<message>.*)$",
+                        re.S)
+
+# One place for every color in the IDE. All widget construction and every
+# ttk style reads from this dict - no hex literal may appear anywhere else
+# in the file. Three surface levels and a single accent, by design: the
+# fewer distinct planes there are, the quieter the window reads.
 THEME = {
     # surfaces
-    "bg":               "#1e1e1e",  # editor background
-    "bg_dark":          "#181818",  # bottom panel / console wells
-    "bg_side":          "#252526",  # sidebar, activity rail, tab strip, dialogs
-    "bg_raise":         "#2d2d2d",  # buttons at rest, tree headings
-    "bg_hover":         "#2a2d2e",  # hover states
-    "bg_active":        "#37373d",  # pressed buttons / selected rows / scrollbar thumbs
-    "titlebar":         "#323233",  # toolbar strip
-    "border":           "#3c3c3c",
+    "bg":               "#181b21",  # editor
+    "bg_dark":          "#14161b",  # chrome: header, sidebar, panel, status bar, dialogs
+    "bg_raise":         "#1f232b",  # inputs, buttons at rest, find bar
+    "bg_hover":         "#242933",
+    "bg_active":        "#2b3140",  # pressed buttons / selected rows / scrollbar thumbs
+    "border":           "#262a33",  # every 1px divider in the window
     # text
-    "fg":               "#cccccc",
-    "fg_code":          "#d4d4d4",
-    "fg_bright":        "#ffffff",
-    "fg_dim":           "#858585",
-    "fg_faint":         "#6e7681",
-    # accents
-    "accent":           "#0e639c",  # primary buttons (VS Code blue)
-    "accent_hover":     "#1177bb",
-    "accent_press":     "#094771",
-    "select_bg":        "#264f78",
-    "statusbar":        "#007acc",
-    "cursor":           "#aeafad",
-    "current_line":     "#3a3d41",  # debugger paused-line highlight
+    "fg":               "#c9cfda",
+    "fg_code":          "#d5dbe6",
+    "fg_bright":        "#eef1f6",
+    "fg_dim":           "#8b93a5",
+    "fg_faint":         "#5d6577",
+    # accent
+    "accent":           "#6c9ef8",
+    "accent_hover":     "#83aefc",
+    "accent_press":     "#5486e0",
+    "select_bg":        "#2b3b5a",
+    "cursor":           "#d5dbe6",
+    "cursor_line":      "#1d212a",  # the line the caret is on
+    "current_line":     "#2a3040",  # the line the debugger is paused on
     # gutter / breakpoints
-    "gutter_fg":        "#858585",
-    "gutter_fg_active": "#c6c6c6",
-    "breakpoint":       "#e51400",
-    # syntax (Dark+)
-    "syn_keyword":      "#c586c0",
-    "syn_type":         "#569cd6",
-    "syn_string":       "#ce9178",
-    "syn_number":       "#b5cea8",
-    "syn_comment":      "#6a9955",
-    "syn_function":     "#dcdcaa",
-    "syn_error":        "#f44747",
+    "gutter_fg":        "#4d5565",
+    "gutter_fg_active": "#8b93a5",
+    "breakpoint":       "#e06c75",
+    # syntax
+    "syn_keyword":      "#c678dd",
+    "syn_type":         "#61afef",
+    "syn_string":       "#98c379",
+    "syn_number":       "#d19a66",
+    "syn_comment":      "#5c6370",
+    "syn_function":     "#e5c07b",
+    "syn_error":        "#e06c75",
     # panels
-    "ok":               "#89d185",
-    "warn":             "#cca700",
-    "error":            "#f14c4c",
-    "trace_fg":         "#9cdcfe",
-    "watch_fg":         "#cca700",
-    "ir_before_fg":     "#9da9b8",
-    "ir_removed":       "#f14c4c",
-    "ir_rewritten":     "#cca700",
-    "ir_after_fg":      "#89d185",
+    "ok":               "#98c379",
+    "warn":             "#e5c07b",
+    "error":            "#e06c75",
+    "trace_fg":         "#7aa5f0",
+    "watch_fg":         "#e5c07b",
+    "ir_before_fg":     "#9aa4b5",
+    "ir_removed":       "#e06c75",
+    "ir_rewritten":     "#e5c07b",
+    "ir_after_fg":      "#98c379",
     # find bar
-    "find_match":       "#613214",
-    "find_current":     "#9e6a03",
+    "find_match":       "#4a3f1e",
+    "find_current":     "#8a6a24",
 }
+
+
+def hairline(parent, side="top", **pack_options):
+    """A 1px divider in the border color. ttk's own borders don't render
+    reliably flat under clam, so every divider in this UI is one of these."""
+    horizontal = side in ("top", "bottom")
+    bar = tk.Frame(parent, background=THEME["border"],
+                   height=1 if horizontal else 0, width=0 if horizontal else 1)
+    bar.pack(side=side, fill="x" if horizontal else "y", **pack_options)
+    return bar
+
+
+class PanelTabs(ttk.Frame):
+    """A flat tab strip over a content area, in place of `ttk.Notebook`.
+
+    clam has no per-tab element that can carry an underline, and its Tab
+    map repaints a bevel on selection no matter how the style is pinned -
+    drawing the strip by hand is what buys the accent-underlined tabs and
+    keeps the strip on the same surface as the panel below it.
+
+    Mirrors the slice of the Notebook API the IDE actually uses: `add`,
+    `select` (by frame, path name or index), and a `<<TabChanged>>` virtual
+    event. `badge()` adds the live problem count to a tab's label.
+    """
+
+    def __init__(self, master):
+        super().__init__(master, style="Panel.TFrame")
+        self._strip = ttk.Frame(self, style="Panel.TFrame")
+        self._strip.pack(fill="x")
+        hairline(self)
+        self._holder = ttk.Frame(self, style="Panel.TFrame")
+        self._holder.pack(fill="both", expand=True)
+        self._tabs = []
+        self._current = None
+
+    def new_frame(self):
+        return ttk.Frame(self._holder, style="Panel.TFrame")
+
+    def add(self, frame, text):
+        tab = ttk.Frame(self._strip, style="Panel.TFrame")
+        tab.pack(side="left")
+        label = ttk.Label(tab, text=text, style="Tab.TLabel")
+        label.pack(padx=12, pady=(8, 6))
+        underline = tk.Frame(tab, background=THEME["bg_dark"], height=2)
+        underline.pack(fill="x")
+        entry = {"frame": frame, "tab": tab, "label": label, "underline": underline, "text": text}
+        self._tabs.append(entry)
+        for widget in (tab, label):
+            widget.bind("<Button-1>", lambda _e, f=frame: self.select(f))
+            widget.bind("<Enter>", lambda _e, x=entry: self._hover(x, True))
+            widget.bind("<Leave>", lambda _e, x=entry: self._hover(x, False))
+        if self._current is None:
+            self.select(frame)
+
+    def badge(self, frame, text=""):
+        entry = self._entry(frame)
+        entry["label"].config(text=f"{entry['text']}  {text}" if text else entry["text"])
+
+    def select(self, target=None):
+        if target is None:
+            return str(self._current["frame"]) if self._current else ""
+        entry = self._entry(target)
+        if entry is self._current:
+            return None
+        if self._current is not None:
+            self._current["frame"].pack_forget()
+        entry["frame"].pack(fill="both", expand=True)
+        self._current = entry
+        for other in self._tabs:
+            selected = other is entry
+            other["label"].config(style="TabOn.TLabel" if selected else "Tab.TLabel")
+            other["underline"].config(background=THEME["accent"] if selected else THEME["bg_dark"])
+        self.event_generate("<<TabChanged>>")
+        return None
+
+    def _entry(self, target):
+        if isinstance(target, int):
+            return self._tabs[target]
+        name = str(target)
+        for entry in self._tabs:
+            if str(entry["frame"]) == name:
+                return entry
+        raise KeyError(name)
+
+    def _hover(self, entry, entering):
+        if entry is not self._current:
+            entry["label"].config(style="TabHover.TLabel" if entering else "Tab.TLabel")
 
 
 class CetirimIDE(tk.Tk):
@@ -114,6 +206,9 @@ class CetirimIDE(tk.Tk):
         self._last_symtab = None
         self._symbols_src = None   # source snapshot the symbol table was built from
         self._symbol_lines = {}    # symbols-tree item id -> declaration line
+        self._problem_lines = {}   # problems-tree item id -> diagnostic line
+        self._checked_src = None   # source snapshot the problem counts describe
+        self._diag_counts = (0, 0)
         self._find_matches = []
         self._find_pos = -1
         self._find_term = None
@@ -148,12 +243,11 @@ class CetirimIDE(tk.Tk):
         self.font_ui = tkfont.Font(family=ui, size=12)
         self.font_ui_sm = tkfont.Font(family=ui, size=11)
         self.font_ui_bold = tkfont.Font(family=ui, size=12, weight="bold")
-        self.font_section = tkfont.Font(family=ui, size=10, weight="bold")
-        self.font_icon = tkfont.Font(family=ui, size=15)
+        self.font_section = tkfont.Font(family=ui, size=11)
 
     def _apply_theme(self):
         T = THEME
-        self.configure(background=T["bg"])
+        self.configure(background=T["bg_dark"])
         style = ttk.Style(self)
         style.theme_use("clam")  # the only built-in theme whose colors fully obey configure()
         # Setting light/dark/border colors at the root style is what kills
@@ -162,80 +256,87 @@ class CetirimIDE(tk.Tk):
                         bordercolor=T["border"], lightcolor=T["bg"], darkcolor=T["bg"],
                         focuscolor=T["bg"], troughcolor=T["bg_dark"],
                         selectbackground=T["select_bg"], selectforeground=T["fg_bright"])
+        # Surfaces: editor level, chrome level, one raised level for inputs.
         style.configure("TFrame", background=T["bg"])
-        style.configure("Side.TFrame", background=T["bg_side"])
-        style.configure("Toolbar.TFrame", background=T["titlebar"])
-        style.configure("TabBar.TFrame", background=T["bg_side"])
-        style.configure("Status.TFrame", background=T["statusbar"])
         style.configure("Panel.TFrame", background=T["bg_dark"])
-        style.configure("Find.TFrame", background=T["bg_raise"])
+        style.configure("Raise.TFrame", background=T["bg_raise"])
+        # Labels
         style.configure("TLabel", background=T["bg"], foreground=T["fg"])
-        style.configure("Title.TLabel", background=T["titlebar"], foreground=T["fg_bright"], font=self.font_ui_bold)
-        style.configure("Toolbar.TLabel", background=T["titlebar"], foreground=T["fg_dim"], font=self.font_ui_sm)
-        style.configure("Section.TLabel", background=T["bg"], foreground=T["fg_dim"], font=self.font_section)
-        style.configure("Side.TLabel", background=T["bg_side"], foreground=T["fg_dim"], font=self.font_section)
-        style.configure("EditorTab.TLabel", background=T["bg"], foreground=T["fg_bright"], font=self.font_ui_sm, padding=(14, 6))
-        style.configure("Status.TLabel", background=T["statusbar"], foreground=T["fg_bright"], font=self.font_ui_sm, padding=(10, 3))
         style.configure("Panel.TLabel", background=T["bg_dark"], foreground=T["fg"], font=self.font_ui_sm)
-        style.configure("PanelSection.TLabel", background=T["bg_dark"], foreground=T["fg_dim"], font=self.font_section)
-        style.configure("PanelHint.TLabel", background=T["bg_dark"], foreground=T["fg_faint"], font=self.font_ui_sm)
-        style.configure("Prompt.TLabel", background=T["bg_dark"], foreground=T["ok"], font=self.font_mono)
-        style.configure("Find.TLabel", background=T["bg_raise"], foreground=T["fg_dim"], font=self.font_ui_sm)
-        style.configure("TButton", background=T["bg_raise"], foreground=T["fg"], borderwidth=0, padding=(11, 6))
+        style.configure("Wordmark.TLabel", background=T["bg_dark"], foreground=T["fg_dim"], font=self.font_ui_bold)
+        style.configure("Section.TLabel", background=T["bg_dark"], foreground=T["fg_dim"], font=self.font_section)
+        style.configure("Hint.TLabel", background=T["bg_dark"], foreground=T["fg_faint"], font=self.font_ui_sm)
+        style.configure("Status.TLabel", background=T["bg_dark"], foreground=T["fg_dim"],
+                        font=self.font_ui_sm, padding=(10, 4))
+        style.configure("Prompt.TLabel", background=T["bg_dark"], foreground=T["accent"], font=self.font_mono)
+        style.configure("Raise.TLabel", background=T["bg_raise"], foreground=T["fg_dim"], font=self.font_ui_sm)
+        style.configure("EditorTab.TLabel", background=T["bg"], foreground=T["fg"],
+                        font=self.font_ui_sm, padding=(14, 8))
+        # Panel tab strip (see PanelTabs) - three states, label color only.
+        for name, color in (("Tab", T["fg_dim"]), ("TabHover", T["fg"]), ("TabOn", T["fg_bright"])):
+            style.configure(f"{name}.TLabel", background=T["bg_dark"], foreground=color, font=self.font_ui_sm)
+        # Buttons. Ghost is the default in chrome; only Run is filled.
+        # width=0 is load-bearing: clam ships TButton with `-width -11`, a
+        # minimum of eleven characters, which pads every label out into a
+        # sea of dead space.
+        flat = dict(borderwidth=0, relief="flat", width=0)
+        style.configure("TButton", background=T["bg_raise"], foreground=T["fg"], padding=(12, 6), **flat)
         style.map("TButton", background=[("active", T["bg_hover"]), ("pressed", T["bg_active"])],
                   foreground=[("disabled", T["fg_faint"])])
-        style.configure("Accent.TButton", background=T["accent"], foreground=T["fg_bright"])
-        style.map("Accent.TButton", background=[("active", T["accent_hover"]), ("pressed", T["accent_press"])],
-                  foreground=[("disabled", T["fg_faint"])])
-        style.configure("Toolbar.TButton", background=T["titlebar"], foreground=T["fg"], borderwidth=0, padding=(10, 5))
-        style.map("Toolbar.TButton", background=[("active", T["bg_hover"]), ("pressed", T["bg_active"])],
-                  foreground=[("disabled", T["fg_faint"])])
-        style.configure("Run.Toolbar.TButton", background=T["accent"], foreground=T["fg_bright"])
-        style.map("Run.Toolbar.TButton", background=[("active", T["accent_hover"]), ("pressed", T["accent_press"])])
-        style.configure("Activity.TButton", background=T["bg_side"], foreground=T["fg_dim"], borderwidth=0,
-                        padding=(0, 9), font=self.font_icon)
-        style.map("Activity.TButton", background=[("active", T["bg_side"]), ("pressed", T["bg_side"])],
-                  foreground=[("active", T["fg_bright"]), ("pressed", T["fg_bright"])])
-        style.configure("Find.TButton", background=T["bg_raise"], foreground=T["fg"], borderwidth=0, padding=(5, 2))
-        style.map("Find.TButton", background=[("active", T["bg_hover"]), ("pressed", T["bg_active"])])
-        style.configure("TEntry", fieldbackground=T["bg_dark"], foreground=T["fg"], insertcolor=T["fg_bright"],
+        style.configure("Ghost.TButton", background=T["bg_dark"], foreground=T["fg_dim"],
+                        padding=(10, 5), font=self.font_ui_sm, **flat)
+        style.map("Ghost.TButton",
+                  background=[("disabled", T["bg_dark"]), ("pressed", T["bg_active"]), ("active", T["bg_hover"])],
+                  foreground=[("disabled", T["fg_faint"]), ("active", T["fg_bright"])],
+                  lightcolor=[("pressed", T["bg_active"]), ("active", T["bg_hover"])],
+                  darkcolor=[("pressed", T["bg_active"]), ("active", T["bg_hover"])])
+        style.configure("Accent.TButton", background=T["accent"], foreground=T["bg_dark"],
+                        padding=(13, 5), font=self.font_ui_sm, **flat)
+        style.map("Accent.TButton",
+                  background=[("disabled", T["bg_raise"]), ("pressed", T["accent_press"]), ("active", T["accent_hover"])],
+                  foreground=[("disabled", T["fg_faint"])],
+                  lightcolor=[("pressed", T["accent_press"]), ("active", T["accent_hover"])],
+                  darkcolor=[("pressed", T["accent_press"]), ("active", T["accent_hover"])])
+        style.configure("Find.TButton", background=T["bg_raise"], foreground=T["fg_dim"], padding=(7, 3),
+                        font=self.font_ui_sm, **flat)
+        style.map("Find.TButton", background=[("active", T["bg_hover"]), ("pressed", T["bg_active"])],
+                  foreground=[("active", T["fg_bright"])])
+        # Inputs
+        style.configure("TEntry", fieldbackground=T["bg_raise"], foreground=T["fg"], insertcolor=T["fg_bright"],
                         bordercolor=T["border"], lightcolor=T["border"], darkcolor=T["border"], padding=6)
-        style.configure("TSpinbox", fieldbackground=T["bg_dark"], foreground=T["fg"], arrowcolor=T["fg_dim"],
-                        bordercolor=T["border"], lightcolor=T["border"], darkcolor=T["border"])
-        style.configure("Treeview", background=T["bg_side"], fieldbackground=T["bg_side"], foreground=T["fg"],
-                        borderwidth=0, rowheight=24, font=self.font_ui_sm)
+        style.map("TEntry", bordercolor=[("focus", T["accent"])], lightcolor=[("focus", T["accent"])],
+                  darkcolor=[("focus", T["accent"])], fieldbackground=[("disabled", T["bg_dark"])],
+                  foreground=[("disabled", T["fg_faint"])])
+        # Trees. bordercolor has to be pinned to the surface too, or clam
+        # draws a 1px box around every panel from the root style's border.
+        style.configure("Treeview", background=T["bg_dark"], fieldbackground=T["bg_dark"], foreground=T["fg"],
+                        borderwidth=0, bordercolor=T["bg_dark"], lightcolor=T["bg_dark"],
+                        darkcolor=T["bg_dark"], rowheight=23, font=self.font_ui_sm)
         style.map("Treeview", background=[("selected", T["bg_active"])], foreground=[("selected", T["fg_bright"])])
         style.configure("Panel.Treeview", background=T["bg_dark"], fieldbackground=T["bg_dark"])
-        style.configure("Treeview.Heading", background=T["bg_raise"], foreground=T["fg_dim"], borderwidth=0,
-                        relief="flat", font=self.font_ui_sm)
+        style.configure("Treeview.Heading", background=T["bg_dark"], foreground=T["fg_faint"],
+                        borderwidth=0, relief="flat", font=self.font_ui_sm, padding=(6, 5))
         style.map("Treeview.Heading", background=[("active", T["bg_hover"])])
-        style.configure("TNotebook", background=T["bg"], borderwidth=0)
-        style.configure("TNotebook.Tab", background=T["bg"], foreground=T["fg_dim"], padding=(12, 6), borderwidth=0)
-        style.map("TNotebook.Tab", background=[("selected", T["bg"])], foreground=[("selected", T["fg_bright"])])
-        # Flat panel tabs: same background as the panel, dim label that turns
-        # white when selected (clam has no per-tab underline element).
-        style.configure("Panel.TNotebook", background=T["bg_dark"], borderwidth=0, tabmargins=(8, 4, 8, 0))
-        style.configure("Panel.TNotebook.Tab", background=T["bg_dark"], foreground=T["fg_dim"], padding=(10, 5),
-                        borderwidth=0, font=self.font_ui_sm, bordercolor=T["bg_dark"],
-                        lightcolor=T["bg_dark"], darkcolor=T["bg_dark"], focuscolor=T["bg_dark"])
-        # clam's built-in Tab map brightens lightcolor/border on selection -
-        # every color has to be pinned per state or a pale box appears.
-        flat_tab = [("selected", T["bg_dark"]), ("active", T["bg_dark"]), ("!selected", T["bg_dark"])]
-        style.map("Panel.TNotebook.Tab", background=flat_tab, lightcolor=flat_tab, darkcolor=flat_tab,
-                  bordercolor=flat_tab, focuscolor=flat_tab,
-                  foreground=[("selected", T["fg_bright"]), ("active", T["fg"])])
+        # A 5px sash in the border color reads as a divider you can grab.
+        style.configure("TPanedwindow", background=T["border"])
+        style.configure("Sash", sashthickness=5, gripcount=0)
         style.configure("TSeparator", background=T["border"])
-        style.configure("TPanedwindow", background=T["bg"])
-        style.configure("Sash", sashthickness=6, gripcount=0)
-        # Arrow-less flat scrollbars (thickness tracks arrowsize in clam).
+        # Arrow-less flat scrollbars (thickness tracks arrowsize in clam), in
+        # two trough colors so they disappear into whichever surface hosts
+        # them. "Editor.Flat.X" inherits the arrow-less layout from "Flat.X"
+        # through ttk's leading-component fallback - only the colors differ.
         for orient, sticky in (("Vertical", "ns"), ("Horizontal", "ew")):
             style.layout(f"Flat.{orient}.TScrollbar",
                          [(f"{orient}.Scrollbar.trough", {"sticky": sticky, "children":
                              [(f"{orient}.Scrollbar.thumb", {"expand": 1, "sticky": "nswe"})]})])
-            style.configure(f"Flat.{orient}.TScrollbar", troughcolor=T["bg_dark"], background=T["bg_active"],
-                            bordercolor=T["bg_dark"], lightcolor=T["bg_active"], darkcolor=T["bg_active"],
-                            gripcount=0, arrowsize=11, relief="flat")
-            style.map(f"Flat.{orient}.TScrollbar", background=[("active", T["fg_faint"])])
+            for prefix, trough in (("Flat", T["bg_dark"]), ("Editor.Flat", T["bg"])):
+                # The thumb rests barely above its trough so a panel whose
+                # content already fits doesn't grow a bright bar down its side.
+                style.configure(f"{prefix}.{orient}.TScrollbar", troughcolor=trough, background=T["border"],
+                                bordercolor=trough, lightcolor=T["border"], darkcolor=T["border"],
+                                gripcount=0, arrowsize=9, relief="flat")
+                style.map(f"{prefix}.{orient}.TScrollbar", background=[("active", T["bg_active"])],
+                          lightcolor=[("active", T["bg_active"])], darkcolor=[("active", T["bg_active"])])
 
     # ------------------------------------------------------------------
     # UI construction
@@ -243,7 +344,7 @@ class CetirimIDE(tk.Tk):
 
     def _build_ui(self):
         self._make_menu()
-        self._build_toolbar()
+        self._build_header()
         self._build_statusbar()  # packed side="bottom" before the body so shrinking never squeezes it out
         self._build_layout()
         self._build_sidebar()
@@ -251,34 +352,48 @@ class CetirimIDE(tk.Tk):
         self._build_panel()
         self._bind_shortcuts()
 
-    def _build_toolbar(self):
-        toolbar = ttk.Frame(self, padding=(14, 8), style="Toolbar.TFrame")
-        toolbar.pack(fill="x")
-        ttk.Label(toolbar, text="CETIRIM", style="Title.TLabel").pack(side="left", padx=(0, 18))
-        groups = [
-            [("New", self.new_file, "Toolbar.TButton"),
-             ("Open", self.open_file, "Toolbar.TButton"),
-             ("Save", self.save_file, "Toolbar.TButton")],
-            [("▶ Run", self.run_program, "Run.Toolbar.TButton"),
-             ("Debug", self.debug_program, "Toolbar.TButton")],
-            [("✓ Check", self.check_code, "Toolbar.TButton"),
-             ("⚡ Optimize", self.show_optimization, "Toolbar.TButton")],
-        ]
-        for i, group in enumerate(groups):
-            if i:
-                ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8, pady=3)
-            for text, callback, button_style in group:
-                ttk.Button(toolbar, text=text, command=callback, style=button_style).pack(side="left", padx=(0, 4))
-        self.font_size = tk.IntVar(value=13)
-        ttk.Spinbox(toolbar, from_=9, to=24, width=4, textvariable=self.font_size,
-                    command=self.change_font).pack(side="right")
-        ttk.Label(toolbar, text="Font", style="Toolbar.TLabel").pack(side="right", padx=(0, 6))
+    def _build_header(self):
+        """One slim bar: analysis actions on the left, execution on the
+        right. File actions live in the File menu only - a toolbar button
+        for Save earns nothing next to a Cmd-S every editor user knows."""
+        header = ttk.Frame(self, style="Panel.TFrame", padding=(14, 6))
+        header.pack(fill="x")
+        left = ttk.Frame(header, style="Panel.TFrame")
+        left.pack(side="left")
+        right = ttk.Frame(header, style="Panel.TFrame")
+        right.pack(side="right")
+        ttk.Label(left, text="Cetirim", style="Wordmark.TLabel").pack(side="left", padx=(2, 14))
+        self._header_divider(left)
+        for text, callback in (("Check", self.check_code), ("Optimize", self.show_optimization)):
+            ttk.Button(left, text=text, command=callback, style="Ghost.TButton").pack(side="left")
+        # Transport stays visible but disabled while nothing is running, so
+        # the debugger's controls are discoverable before a session starts.
+        self.step_btn = ttk.Button(right, text="Step", command=self.debug_step,
+                                   state="disabled", style="Ghost.TButton")
+        self.step_btn.pack(side="left")
+        self.continue_btn = ttk.Button(right, text="Continue", command=self.debug_continue,
+                                       state="disabled", style="Ghost.TButton")
+        self.continue_btn.pack(side="left")
+        self.stop_btn = ttk.Button(right, text="Stop", command=self.debug_stop,
+                                   state="disabled", style="Ghost.TButton")
+        self.stop_btn.pack(side="left")
+        self._header_divider(right)
+        ttk.Button(right, text="Debug", command=self.debug_program, style="Ghost.TButton").pack(side="left")
+        ttk.Button(right, text="▶  Run", command=self.run_program,
+                   style="Accent.TButton").pack(side="left", padx=(6, 2))
+        hairline(self)
+
+    @staticmethod
+    def _header_divider(parent):
+        tk.Frame(parent, background=THEME["border"], width=1).pack(side="left", fill="y", padx=10, pady=4)
 
     def _build_statusbar(self):
-        bar = ttk.Frame(self, style="Status.TFrame")
+        bar = ttk.Frame(self, style="Panel.TFrame")
         bar.pack(side="bottom", fill="x")
-        self.status = ttk.Label(bar, style="Status.TLabel", anchor="w")
+        hairline(bar)
+        self.status = ttk.Label(bar, style="Status.TLabel", anchor="w", cursor="hand2")
         self.status.pack(side="left")
+        self.status.bind("<Button-1>", lambda _e: self.bottom_tabs.select(self.problems_frame))
         self.status_run = ttk.Label(bar, style="Status.TLabel", anchor="w")
         self.status_run.pack(side="left")
         self.status_lang = ttk.Label(bar, text="Cetirim", style="Status.TLabel", anchor="e")
@@ -287,21 +402,13 @@ class CetirimIDE(tk.Tk):
         self.status_pos.pack(side="right")
 
     def _build_layout(self):
-        body = ttk.Frame(self)
+        body = ttk.Frame(self, style="Panel.TFrame")
         body.pack(fill="both", expand=True)
-        self.activity_bar = ttk.Frame(body, width=44, style="Side.TFrame")
-        self.activity_bar.pack(side="left", fill="y")
-        self.activity_bar.pack_propagate(False)
-        for glyph, command in (("▤", self.toggle_sidebar),
-                               ("▣", self.toggle_panel),
-                               ("⚡", lambda: self.bottom_tabs.select(self.optimizer_frame))):
-            ttk.Button(self.activity_bar, text=glyph, command=command, style="Activity.TButton",
-                       takefocus=0).pack(fill="x", pady=(4, 0))
         self.vsplit = ttk.PanedWindow(body, orient="vertical")
         self.vsplit.pack(fill="both", expand=True)
         self.hsplit = ttk.PanedWindow(self.vsplit, orient="horizontal")
-        self._sidebar = ttk.Frame(self.hsplit, width=230, style="Side.TFrame")
-        self._editor_area = ttk.Frame(self.hsplit)
+        self._sidebar = ttk.Frame(self.hsplit, width=220, style="Panel.TFrame")
+        self._editor_area = ttk.Frame(self.hsplit, style="TFrame")
         self.hsplit.add(self._sidebar, weight=0)
         self.hsplit.add(self._editor_area, weight=1)
         self._panel = ttk.Frame(self.vsplit, style="Panel.TFrame")
@@ -318,8 +425,8 @@ class CetirimIDE(tk.Tk):
             self.update_idletasks()
             height = self.vsplit.winfo_height()
             if height > 500:
-                self.vsplit.sashpos(0, height - 290)
-            self.hsplit.sashpos(0, 230)
+                self.vsplit.sashpos(0, height - 280)
+            self.hsplit.sashpos(0, 220)
         except tk.TclError:
             pass
 
@@ -336,62 +443,74 @@ class CetirimIDE(tk.Tk):
             self.vsplit.add(self._panel, weight=1)
 
     def _build_sidebar(self):
-        ttk.Label(self._sidebar, text="OUTLINE", style="Side.TLabel").pack(anchor="w", padx=12, pady=(10, 6))
-        self.outline = ttk.Treeview(self._sidebar, show="tree", selectmode="browse")
-        self.outline.pack(fill="both", expand=True, padx=(4, 0))
+        head = ttk.Frame(self._sidebar, style="Panel.TFrame", padding=(14, 10, 14, 8))
+        head.pack(fill="x")
+        ttk.Label(head, text="Outline", style="Section.TLabel").pack(side="left")
+        wrap = ttk.Frame(self._sidebar, style="Panel.TFrame")
+        wrap.pack(fill="both", expand=True)
+        self.outline = ttk.Treeview(wrap, show="tree", selectmode="browse", style="Panel.Treeview")
+        for kind, color in (("function", THEME["syn_function"]), ("struct", THEME["syn_type"]),
+                            ("typedef", THEME["syn_keyword"])):
+            self.outline.tag_configure(kind, foreground=color)
+        self._scrolled(self.outline)
+        self.outline.pack(side="left", fill="both", expand=True, padx=(6, 0))
         self.outline.bind("<<TreeviewSelect>>", self.go_to_outline)
 
     def _build_editor(self):
         T = THEME
         area = self._editor_area
-        tabbar = ttk.Frame(area, style="TabBar.TFrame")
+        tabbar = ttk.Frame(area, style="Panel.TFrame")
+        # The divider is packed first so it spans the whole strip; a
+        # side="left" label packed before it would claim the full height and
+        # push the line out from under itself.
+        hairline(tabbar, side="bottom")
         self.editor_tab = ttk.Label(tabbar, style="EditorTab.TLabel")
         self.editor_tab.pack(side="left")
-        self.line_numbers = tk.Text(area, width=6, height=1, padx=8, pady=8, takefocus=0, state="disabled",
+        self.line_numbers = tk.Text(area, width=6, height=1, padx=8, pady=10, takefocus=0, state="disabled",
                                     background=T["bg"], foreground=T["gutter_fg"], borderwidth=0,
-                                    highlightthickness=0, font=self.font_editor, cursor="arrow")
+                                    highlightthickness=0, font=self.font_editor, cursor="arrow",
+                                    spacing1=1, spacing3=1)
         self.line_numbers.tag_configure("breakpoint", foreground=T["breakpoint"])
         self.line_numbers.tag_configure("active_ln", foreground=T["gutter_fg_active"])
         self.line_numbers.bind("<Button-1>", self.toggle_breakpoint)
         self.line_numbers.bind("<MouseWheel>", self._gutter_scroll)
-        vscroll = ttk.Scrollbar(area, orient="vertical", style="Flat.Vertical.TScrollbar")
+        vscroll = ttk.Scrollbar(area, orient="vertical", style="Editor.Flat.Vertical.TScrollbar")
         self.editor = tk.Text(area, height=1, undo=True, wrap="none", borderwidth=0, highlightthickness=0,
-                              padx=12, pady=8, background=T["bg"], foreground=T["fg_code"],
-                              insertbackground=T["cursor"], selectbackground=T["select_bg"],
-                              font=self.font_editor,
+                              padx=10, pady=10, background=T["bg"], foreground=T["fg_code"],
+                              insertbackground=T["cursor"], insertwidth=2, selectbackground=T["select_bg"],
+                              font=self.font_editor, spacing1=1, spacing3=1,
                               yscrollcommand=lambda a, b: self._scroll_both(a, b, vscroll))
         vscroll.config(command=self._scroll_editor)
-        self.editor_hscroll = ttk.Scrollbar(area, orient="horizontal", style="Flat.Horizontal.TScrollbar",
+        self.editor_hscroll = ttk.Scrollbar(area, orient="horizontal", style="Editor.Flat.Horizontal.TScrollbar",
                                             command=self.editor.xview)
         self.editor.config(xscrollcommand=self.editor_hscroll.set)
         tabbar.grid(row=0, column=0, columnspan=3, sticky="ew")
         self.line_numbers.grid(row=1, column=0, sticky="ns")
         self.editor.grid(row=1, column=1, sticky="nsew")
         vscroll.grid(row=1, column=2, sticky="ns")
-        self.editor_hscroll.grid(row=2, column=0, columnspan=2, sticky="ew")
+        self.editor_hscroll.grid(row=2, column=0, columnspan=3, sticky="ew")
         area.grid_rowconfigure(1, weight=1)
         area.grid_columnconfigure(1, weight=1)
         self._configure_tags()
         self._build_find_bar()
 
     def _build_find_bar(self):
-        T = THEME
         # A 1px THEME border via an outer tk.Frame; shown/hidden with place()
         # so the editor never reflows.
-        self.find_bar = tk.Frame(self._editor_area, background=T["border"], padx=1, pady=1)
-        inner = ttk.Frame(self.find_bar, padding=6, style="Find.TFrame")
+        self.find_bar = tk.Frame(self._editor_area, background=THEME["border"], padx=1, pady=1)
+        inner = ttk.Frame(self.find_bar, padding=8, style="Raise.TFrame")
         inner.pack(fill="both", expand=True)
-        row1 = ttk.Frame(inner, style="Find.TFrame")
+        row1 = ttk.Frame(inner, style="Raise.TFrame")
         row1.pack(fill="x")
         self.find_entry = ttk.Entry(row1, width=22, font=self.font_mono_sm)
         self.find_entry.pack(side="left")
-        self.find_count = ttk.Label(row1, text="", width=10, style="Find.TLabel")
+        self.find_count = ttk.Label(row1, text="", width=10, style="Raise.TLabel")
         self.find_count.pack(side="left", padx=(8, 4))
         ttk.Button(row1, text="↑", width=2, command=self.find_prev, style="Find.TButton").pack(side="left")
         ttk.Button(row1, text="↓", width=2, command=self.find_next, style="Find.TButton").pack(side="left", padx=(2, 0))
-        ttk.Button(row1, text="✕", width=2, command=self.hide_find_bar, style="Find.TButton").pack(side="left", padx=(6, 0))
-        row2 = ttk.Frame(inner, style="Find.TFrame")
-        row2.pack(fill="x", pady=(4, 0))
+        ttk.Button(row1, text="✕", width=2, command=self.hide_find_bar, style="Find.TButton").pack(side="left", padx=(8, 0))
+        row2 = ttk.Frame(inner, style="Raise.TFrame")
+        row2.pack(fill="x", pady=(6, 0))
         self.replace_entry = ttk.Entry(row2, width=22, font=self.font_mono_sm)
         self.replace_entry.pack(side="left")
         ttk.Button(row2, text="Replace", command=self.replace_current, style="Find.TButton").pack(side="left", padx=(8, 0))
@@ -404,13 +523,13 @@ class CetirimIDE(tk.Tk):
         self.replace_entry.bind("<Return>", lambda e: self.replace_current())
 
     def _build_panel(self):
-        self.bottom_tabs = ttk.Notebook(self._panel, style="Panel.TNotebook")
+        self.bottom_tabs = PanelTabs(self._panel)
         self.bottom_tabs.pack(fill="both", expand=True)
         frames = {}
-        for key, label in (("output", "OUTPUT"), ("problems", "PROBLEMS"), ("debug", "DEBUG"),
-                           ("trace", "TRACE"), ("symbols", "SYMBOLS"), ("optimizer", "OPTIMIZER")):
-            frame = ttk.Frame(self.bottom_tabs, style="Panel.TFrame")
-            self.bottom_tabs.add(frame, text=f"  {label}  ")
+        for key, label in (("output", "Output"), ("problems", "Problems"), ("debug", "Debug"),
+                           ("trace", "Trace"), ("symbols", "Symbols"), ("optimizer", "Optimizer")):
+            frame = self.bottom_tabs.new_frame()
+            self.bottom_tabs.add(frame, label)
             frames[key] = frame
         self.problems_frame = frames["problems"]
         self.symbols_frame = frames["symbols"]
@@ -421,7 +540,9 @@ class CetirimIDE(tk.Tk):
         self._build_trace_tab(frames["trace"])
         self._build_symbols_tab(frames["symbols"])
         self._build_optimizer_tab(frames["optimizer"])
-        self.bottom_tabs.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+        self.bottom_tabs.bind("<<TabChanged>>", self._on_tab_changed)
+
+    # -- small builders shared by the panel tabs ------------------------
 
     def _panel_list(self, parent, **kwargs):
         T = THEME
@@ -453,89 +574,122 @@ class CetirimIDE(tk.Tk):
         box.pack(side="left", fill="both", expand=True)
         return box
 
+    def _scrolled_tree(self, parent, columns=(), widths=(), **kwargs):
+        """A headless (no heading row) tree + flat scrollbar, the shape every
+        debugger panel uses: column #0 is the name, the rest are values.
+        Only the last column stretches - letting an intermediate one absorb
+        the slack pushes the final column far off to the right."""
+        wrap = ttk.Frame(parent, style="Panel.TFrame")
+        wrap.pack(fill="both", expand=True)
+        tree = ttk.Treeview(wrap, columns=columns, show="tree", style="Panel.Treeview", **kwargs)
+        tree.column("#0", width=widths[0] if widths else 200, stretch=not columns)
+        for index, (name, width) in enumerate(zip(columns, widths[1:])):
+            tree.column(name, width=width, stretch=index == len(columns) - 1)
+        tree.tag_configure("group", foreground=THEME["fg_dim"])
+        tree.tag_configure("dim", foreground=THEME["fg_faint"])
+        self._scrolled(tree)
+        tree.pack(side="left", fill="both", expand=True)
+        return tree
+
+    @staticmethod
+    def _column(parent, title, weight=True, divider=True):
+        """One titled column of the Debug/Optimizer tabs, with the hairline
+        that separates it from the previous one."""
+        if divider:
+            hairline(parent, side="left", pady=8)
+        column = ttk.Frame(parent, style="Panel.TFrame", padding=(10, 8, 10, 10))
+        column.pack(side="left", fill="both", expand=weight)
+        ttk.Label(column, text=title, style="Section.TLabel").pack(anchor="w", pady=(0, 6))
+        return column
+
+    # -- panel tabs -----------------------------------------------------
+
     def _build_output_tab(self, frame):
         T = THEME
         # The input row packs first (side="bottom") so a short panel squeezes
         # the console, never the prompt.
-        terminal_input = ttk.Frame(frame, padding=(8, 6), style="Panel.TFrame")
+        terminal_input = ttk.Frame(frame, padding=(12, 8), style="Panel.TFrame")
         terminal_input.pack(side="bottom", fill="x")
+        hairline(frame, side="bottom")  # lands directly above the input row
         console_wrap = ttk.Frame(frame, style="Panel.TFrame")
         console_wrap.pack(fill="both", expand=True)
-        self.console = tk.Text(console_wrap, height=10, background=T["bg_dark"], foreground=T["fg"],
+        self.console = tk.Text(console_wrap, width=1, height=10, background=T["bg_dark"], foreground=T["fg"],
                                insertbackground=T["cursor"], font=self.font_mono, state="disabled",
-                               borderwidth=0, highlightthickness=0, padx=12, pady=8)
+                               borderwidth=0, highlightthickness=0, padx=14, pady=10, spacing1=1)
+        self.console.tag_configure("meta", foreground=T["fg_faint"])
         self._scrolled(self.console)
         self.console.pack(side="left", fill="both", expand=True)
         self.terminal_prompt = ttk.Label(terminal_input, text="❯", style="Prompt.TLabel")
-        self.terminal_prompt.pack(side="left", padx=(0, 6))
+        self.terminal_prompt.pack(side="left", padx=(2, 8))
         self.terminal_entry = ttk.Entry(terminal_input, font=self.font_mono, state="disabled")
         self.terminal_entry.pack(side="left", fill="x", expand=True)
         self.terminal_entry.bind("<Return>", self.submit_terminal_input)
         self.terminal_send = ttk.Button(terminal_input, text="Send", command=self.submit_terminal_input,
                                         state="disabled", style="Accent.TButton")
-        self.terminal_send.pack(side="left", padx=(6, 0))
+        self.terminal_send.pack(side="left", padx=(8, 0))
 
     def _build_problems_tab(self, frame):
-        self.problems = self._scrolled_list(frame, height=9, font=self.font_mono_sm)
+        wrap = ttk.Frame(frame, style="Panel.TFrame", padding=(2, 4, 2, 2))
+        wrap.pack(fill="both", expand=True)
+        self.problems = self._scrolled_tree(wrap, columns=("where", "message"), widths=(170, 130, 700),
+                                            selectmode="browse")
+        for tag, color in (("ok", THEME["ok"]), ("warn", THEME["warn"]), ("error", THEME["error"])):
+            self.problems.tag_configure(tag, foreground=color)
         self.problems.bind("<Double-1>", self.go_to_problem)
 
     def _build_debug_tab(self, frame):
-        debug_toolbar = ttk.Frame(frame, padding=(8, 6), style="Panel.TFrame")
-        debug_toolbar.pack(fill="x")
-        self.step_btn = ttk.Button(debug_toolbar, text="⏵ Step", command=self.debug_step, state="disabled")
-        self.step_btn.pack(side="left", padx=(0, 5))
-        self.continue_btn = ttk.Button(debug_toolbar, text="⏭ Continue", command=self.debug_continue, state="disabled")
-        self.continue_btn.pack(side="left", padx=(0, 5))
-        self.stop_btn = ttk.Button(debug_toolbar, text="⏹ Stop", command=self.debug_stop, state="disabled")
-        self.stop_btn.pack(side="left")
-        ttk.Label(debug_toolbar, text="Click a line number to toggle a breakpoint.",
-                  style="PanelHint.TLabel").pack(side="left", padx=(14, 0))
-        panes = ttk.Frame(frame, padding=(8, 0, 8, 8), style="Panel.TFrame")
+        hint = ttk.Frame(frame, padding=(14, 8, 14, 4), style="Panel.TFrame")
+        hint.pack(fill="x")
+        ttk.Label(hint, text="Click a line number to toggle a breakpoint, then Debug.  ·  "
+                            "Step and Continue are in the toolbar.  ·  "
+                            "Double-click a watch to remove it.",
+                  style="Hint.TLabel").pack(side="left")
+        panes = ttk.Frame(frame, style="Panel.TFrame")
         panes.pack(fill="both", expand=True)
-        call_col = ttk.Frame(panes, style="Panel.TFrame")
-        call_col.pack(side="left", fill="both", padx=(0, 12))
-        ttk.Label(call_col, text="CALL STACK", style="PanelSection.TLabel").pack(anchor="w", pady=(0, 4))
-        self.callstack_list = self._scrolled_list(call_col, width=22, height=8)
-        vars_col = ttk.Frame(panes, style="Panel.TFrame")
-        vars_col.pack(side="left", fill="both", expand=True, padx=(0, 12))
-        ttk.Label(vars_col, text="VARIABLES", style="PanelSection.TLabel").pack(anchor="w", pady=(0, 4))
-        self.vars_list = self._scrolled_list(vars_col, height=8)
-        watch_col = ttk.Frame(panes, style="Panel.TFrame")
-        watch_col.pack(side="left", fill="both", expand=True)
-        ttk.Label(watch_col, text="WATCH", style="PanelSection.TLabel").pack(anchor="w", pady=(0, 4))
+        call_col = self._column(panes, "Call Stack", weight=False, divider=False)
+        call_col.configure(width=190)
+        call_col.pack_propagate(False)
+        self.callstack_list = self._scrolled_tree(call_col, widths=(170,), selectmode="none")
+        vars_col = self._column(panes, "Variables")
+        self.vars_list = self._scrolled_tree(vars_col, columns=("value",), widths=(160, 260), selectmode="browse")
+        watch_col = self._column(panes, "Watch")
         watch_entry_row = ttk.Frame(watch_col, style="Panel.TFrame")
-        watch_entry_row.pack(fill="x", pady=(0, 4))
+        watch_entry_row.pack(fill="x", pady=(0, 6))
         self.watch_entry = ttk.Entry(watch_entry_row, font=self.font_mono_sm)
         self.watch_entry.pack(side="left", fill="x", expand=True)
         self.watch_entry.bind("<Return>", lambda e: self.add_watch())
-        ttk.Button(watch_entry_row, text="Add", command=self.add_watch).pack(side="left", padx=(5, 0))
-        ttk.Label(watch_col, text="Double-click a watch to remove it.",
-                  style="PanelHint.TLabel").pack(anchor="w")
-        self.watch_list = self._scrolled_list(watch_col, height=6, foreground=THEME["watch_fg"])
+        ttk.Button(watch_entry_row, text="Add", command=self.add_watch,
+                   style="Ghost.TButton").pack(side="left", padx=(6, 0))
+        self.watch_list = self._scrolled_tree(watch_col, columns=("value",), widths=(140, 200), selectmode="browse")
+        self.watch_list.tag_configure("watched", foreground=THEME["watch_fg"])
         self.watch_list.bind("<Double-1>", self.remove_watch)
 
     def _build_trace_tab(self, frame):
-        inner = ttk.Frame(frame, padding=8, style="Panel.TFrame")
+        inner = ttk.Frame(frame, padding=(12, 10), style="Panel.TFrame")
         inner.pack(fill="both", expand=True)
         self.trace_list = self._scrolled_list(inner, foreground=THEME["trace_fg"])
 
     def _build_symbols_tab(self, frame):
-        symbols_toolbar = ttk.Frame(frame, padding=(8, 6), style="Panel.TFrame")
+        symbols_toolbar = ttk.Frame(frame, padding=(12, 8, 12, 4), style="Panel.TFrame")
         symbols_toolbar.pack(fill="x")
-        ttk.Button(symbols_toolbar, text="⟳ Refresh", command=self._refresh_symbols_from_source).pack(side="left")
+        ttk.Button(symbols_toolbar, text="Refresh", command=self._refresh_symbols_from_source,
+                   style="Ghost.TButton").pack(side="left")
         ttk.Label(symbols_toolbar,
                   text="The semantic analyzer's symbol table: functions, structs, typedefs and globals.",
-                  style="PanelHint.TLabel").pack(side="left", padx=(12, 0))
+                  style="Hint.TLabel").pack(side="left", padx=(10, 0))
         wrap = ttk.Frame(frame, style="Panel.TFrame")
-        wrap.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        wrap.pack(fill="both", expand=True, padx=2, pady=(0, 2))
         self.symbols_tree = ttk.Treeview(wrap, columns=("type", "detail"), style="Panel.Treeview", height=8)
         self.symbols_tree.heading("#0", text="Name", anchor="w")
         self.symbols_tree.heading("type", text="Type", anchor="w")
         self.symbols_tree.heading("detail", text="Details", anchor="w")
-        self.symbols_tree.column("#0", width=280, stretch=True)
-        self.symbols_tree.column("type", width=180, stretch=False)
+        # Only the trailing column stretches, so a wide panel doesn't strand
+        # Type and Details far off to the right of the names.
+        self.symbols_tree.column("#0", width=420, stretch=False)
+        self.symbols_tree.column("type", width=150, stretch=False)
         self.symbols_tree.column("detail", width=360, stretch=True)
         self.symbols_tree.tag_configure("dim", foreground=THEME["fg_faint"])
+        self.symbols_tree.tag_configure("group", foreground=THEME["fg_dim"])
         self._scrolled(self.symbols_tree)
         self.symbols_tree.pack(side="left", fill="both", expand=True)
         self.symbols_tree.bind("<Double-1>", self.go_to_symbol)
@@ -543,41 +697,33 @@ class CetirimIDE(tk.Tk):
 
     def _build_optimizer_tab(self, frame):
         T = THEME
-        optimizer_toolbar = ttk.Frame(frame, padding=(8, 6), style="Panel.TFrame")
+        optimizer_toolbar = ttk.Frame(frame, padding=(12, 8, 12, 4), style="Panel.TFrame")
         optimizer_toolbar.pack(fill="x")
-        ttk.Button(optimizer_toolbar, text="⚡ Optimize", command=self.show_optimization,
-                   style="Accent.TButton").pack(side="left")
+        ttk.Button(optimizer_toolbar, text="Optimize", command=self.show_optimization,
+                   style="Ghost.TButton").pack(side="left")
         self.optimizer_stats = ttk.Label(optimizer_toolbar,
                                          text="Press Optimize to compare the IR before and after optimization.",
-                                         style="Panel.TLabel")
-        self.optimizer_stats.pack(side="left", padx=(14, 0))
-        optimizer_panes = ttk.Frame(frame, padding=(8, 0, 8, 8), style="Panel.TFrame")
+                                         style="Hint.TLabel")
+        self.optimizer_stats.pack(side="left", padx=(10, 0))
+        optimizer_panes = ttk.Frame(frame, style="Panel.TFrame")
         optimizer_panes.pack(fill="both", expand=True)
-        before_col = ttk.Frame(optimizer_panes, style="Panel.TFrame")
-        before_col.pack(side="left", fill="both", expand=True, padx=(0, 12))
-        ttk.Label(before_col, text="ORIGINAL IR", style="PanelSection.TLabel").pack(anchor="w", pady=(0, 4))
-        before_wrap = ttk.Frame(before_col, style="Panel.TFrame")
-        before_wrap.pack(fill="both", expand=True)
-        self.opt_before = tk.Text(before_wrap, height=8, state="disabled", wrap="none",
+        before_col = self._column(optimizer_panes, "Original IR", divider=False)
+        # width=1: tk.Text asks for 80 columns by default, and two of those
+        # eat the whole panel before the third column gets any space at all.
+        self.opt_before = tk.Text(before_col, width=1, height=8, state="disabled", wrap="none",
                                   background=T["bg_dark"], foreground=T["ir_before_fg"],
                                   font=self.font_mono_sm, borderwidth=0, highlightthickness=0)
         self._scrolled(self.opt_before, hbar=True)
         self.opt_before.pack(side="left", fill="both", expand=True)
         self.opt_before.tag_configure("removed", foreground=T["ir_removed"])
         self.opt_before.tag_configure("rewritten", foreground=T["ir_rewritten"])
-        after_col = ttk.Frame(optimizer_panes, style="Panel.TFrame")
-        after_col.pack(side="left", fill="both", expand=True, padx=(0, 12))
-        ttk.Label(after_col, text="OPTIMIZED IR", style="PanelSection.TLabel").pack(anchor="w", pady=(0, 4))
-        after_wrap = ttk.Frame(after_col, style="Panel.TFrame")
-        after_wrap.pack(fill="both", expand=True)
-        self.opt_after = tk.Text(after_wrap, height=8, state="disabled", wrap="none",
+        after_col = self._column(optimizer_panes, "Optimized IR")
+        self.opt_after = tk.Text(after_col, width=1, height=8, state="disabled", wrap="none",
                                  background=T["bg_dark"], foreground=T["ir_after_fg"],
                                  font=self.font_mono_sm, borderwidth=0, highlightthickness=0)
         self._scrolled(self.opt_after, hbar=True)
         self.opt_after.pack(side="left", fill="both", expand=True)
-        log_col = ttk.Frame(optimizer_panes, style="Panel.TFrame")
-        log_col.pack(side="left", fill="both", expand=True)
-        ttk.Label(log_col, text="TRANSFORMATIONS", style="PanelSection.TLabel").pack(anchor="w", pady=(0, 4))
+        log_col = self._column(optimizer_panes, "Transformations")
         self.opt_log = self._scrolled_list(log_col, height=8)
         self.opt_log.bind("<Double-1>", self.go_to_transformation)
 
@@ -601,6 +747,10 @@ class CetirimIDE(tk.Tk):
         for label, callback, key in (("Toggle sidebar", self.toggle_sidebar, acc("B")),
                                      ("Toggle panel", self.toggle_panel, acc("J"))):
             view_menu.add_command(label=label, command=callback, accelerator=key)
+        view_menu.add_separator()
+        # The font-size control lives here now that the toolbar spinbox is gone.
+        for label, delta, key in (("Increase font size", 1, acc("+")), ("Decrease font size", -1, acc("-"))):
+            view_menu.add_command(label=label, command=lambda d=delta: self.change_font_size(d), accelerator=key)
         menu.add_cascade(label="View", menu=view_menu)
         tools = tk.Menu(menu, tearoff=False)
         for label, callback, key in (("Run", self.run_program, "F5"), ("Debug", self.debug_program, "F6"),
@@ -608,13 +758,18 @@ class CetirimIDE(tk.Tk):
                                      ("Optimize IR", self.show_optimization, acc("Shift-O")),
                                      ("Symbol table", self.show_symbols, "")):
             tools.add_command(label=label, command=callback, accelerator=key)
+        tools.add_separator()
+        for label, callback, key in (("Step", self.debug_step, "F8"),
+                                     ("Continue", self.debug_continue, "F9"),
+                                     ("Stop", self.debug_stop, "Shift+F5")):
+            tools.add_command(label=label, command=callback, accelerator=key)
         menu.add_cascade(label="Tools", menu=tools)
         self.config(menu=menu)
 
     def _bind_shortcuts(self):
         self.editor.bind("<<Modified>>", self.on_modified)
         self.editor.bind("<KeyRelease>", self.on_key_release)
-        self.editor.bind("<ButtonRelease-1>", lambda e: self._schedule_refresh())
+        self.editor.bind("<ButtonRelease-1>", self.on_key_release)
         self.editor.bind("<Escape>", self.hide_find_bar)
         mod = "Command" if self.is_aqua else "Control"
         bindings = {
@@ -626,9 +781,16 @@ class CetirimIDE(tk.Tk):
             f"<{mod}-b>": lambda e: self.toggle_sidebar(),
             f"<{mod}-j>": lambda e: self.toggle_panel(),
             f"<{mod}-Shift-O>": lambda e: self.show_optimization(),
+            # plus/equal both, so the size grows with or without Shift held.
+            f"<{mod}-plus>": lambda e: self.change_font_size(1),
+            f"<{mod}-equal>": lambda e: self.change_font_size(1),
+            f"<{mod}-minus>": lambda e: self.change_font_size(-1),
             "<F5>": lambda e: self.run_program(),
+            "<Shift-F5>": lambda e: self.debug_stop(),
             "<F6>": lambda e: self.debug_program(),
             "<F7>": lambda e: self.check_code(),
+            "<F8>": lambda e: self.debug_step(),
+            "<F9>": lambda e: self.debug_continue(),
             "<Control-space>": self.show_suggestions,
         }
         for sequence, callback in bindings.items():
@@ -655,15 +817,19 @@ class CetirimIDE(tk.Tk):
                             ("function", T["syn_function"]), ("error", T["syn_error"])):
             self.editor.tag_configure(name, foreground=color)
         self.editor.tag_configure("error", underline=True)
+        self.editor.tag_configure("cursor_line", background=T["cursor_line"])
         self.editor.tag_configure("current_line", background=T["current_line"])
         self.editor.tag_configure("find_match", background=T["find_match"])
         self.editor.tag_configure("find_current", background=T["find_current"], foreground=T["fg_bright"])
-        self.editor.tag_raise("find_match")
-        self.editor.tag_raise("find_current")
-        self.editor.tag_raise("sel")
+        # The caret line sits under every other background tag; the paused
+        # line, the find highlights and the selection all have to win over it.
+        self.editor.tag_lower("cursor_line")
+        for name in ("current_line", "find_match", "find_current", "sel"):
+            self.editor.tag_raise(name)
 
-    def change_font(self):
-        self.font_editor.configure(size=self.font_size.get())
+    def change_font_size(self, delta):
+        size = max(9, min(24, int(self.font_editor.cget("size")) + delta))
+        self.font_editor.configure(size=size)
         self.refresh_line_numbers()
 
     def _scroll_both(self, first, last, scrollbar):
@@ -693,6 +859,9 @@ class CetirimIDE(tk.Tk):
             self._schedule_refresh()
 
     def on_key_release(self, _event=None):
+        # The caret's own feedback is cheap, so it updates on every keystroke
+        # instead of waiting out the highlight/outline debounce.
+        self._sync_caret()
         self._schedule_refresh()
 
     def _schedule_refresh(self):
@@ -700,19 +869,39 @@ class CetirimIDE(tk.Tk):
             self.after_cancel(self.refresh_id)
         self.refresh_id = self.after(180, self._refresh_all)
 
+    def _sync_caret(self):
+        line, col = self.editor.index("insert").split(".")
+        self.status_pos.config(text=f"Ln {line}, Col {int(col) + 1}")
+        self.editor.tag_remove("cursor_line", "1.0", "end")
+        self.editor.tag_add("cursor_line", f"{line}.0", f"{int(line) + 1}.0")
+
     def _refresh_all(self):
         self.refresh_id = None
         self.highlight()
         self.refresh_line_numbers()
         self.refresh_outline()
         self._update_editor_tab()
-        line, col = self.editor.index("insert").split(".")
-        self.status.config(text=self.file_path.name if self.file_path else "Untitled.src")
-        self.status_pos.config(text=f"Ln {line}, Col {int(col) + 1}")
+        self._sync_caret()
+        self._refresh_diagnostics_status()
+
+    def _refresh_diagnostics_status(self):
+        """The status bar's left segment. Counts are only meaningful for the
+        buffer they were produced from, so an edit demotes them to a hint
+        rather than leaving a stale ✓ on screen."""
+        if self._checked_src != self.source():
+            self.status.config(text="Not checked", foreground=THEME["fg_faint"])
+            return
+        errors, warnings = self._diag_counts
+        if not errors and not warnings:
+            self.status.config(text="✓  No problems", foreground=THEME["ok"])
+        else:
+            self.status.config(text=f"✖ {errors}    ⚠ {warnings}",
+                               foreground=THEME["error"] if errors else THEME["warn"])
 
     def _update_editor_tab(self):
         name = self.file_path.name if self.file_path else "Untitled.src"
-        self.editor_tab.config(text=f"{name} ●" if self.dirty else name)
+        self.editor_tab.config(text=f"{name}  ●" if self.dirty else name,
+                               foreground=THEME["fg_bright"] if self.dirty else THEME["fg"])
 
     def highlight(self):
         src = self.source()
@@ -737,7 +926,7 @@ class CetirimIDE(tk.Tk):
         count = max(1, int(self.editor.index("end-1c").split(".")[0]))
         digits = max(2, len(str(count)))
         active = int(self.editor.index("insert").split(".")[0])
-        self.line_numbers.config(state="normal", width=digits + 3)
+        self.line_numbers.config(state="normal", width=digits + 2)
         self.line_numbers.delete("1.0", "end")
         self.line_numbers.insert("1.0", "\n".join(
             f"{'●' if i in self.breakpoints else ' '} {i:>{digits}}" for i in range(1, count + 1)))
@@ -758,11 +947,12 @@ class CetirimIDE(tk.Tk):
         self.outline.delete(*self.outline.get_children())
         src = self.source()
         pattern = re.compile(r"^\s*(?:struct\s+(\w+)|typedef\s+.+?\s+(\w+)\s*;|(?:int|float|char|string|bool|void)\s+(\w+)\s*\()", re.M)
+        glyphs = {"function": "ƒ", "struct": "◆", "typedef": "≡"}
         for match in pattern.finditer(src):
             name = next(item for item in match.groups() if item)
             kind = "struct" if match.group(1) else "typedef" if match.group(2) else "function"
             line = src[:match.start()].count("\n") + 1
-            self.outline.insert("", "end", text=f"{kind}  {name}", values=(line,))
+            self.outline.insert("", "end", text=f" {glyphs[kind]}  {name}", values=(line,), tags=(kind,))
 
     def go_to_outline(self, _event=None):
         selected = self.outline.selection()
@@ -780,7 +970,7 @@ class CetirimIDE(tk.Tk):
             selection = self.editor.get("sel.first", "sel.last")
         except tk.TclError:
             selection = ""
-        self.find_bar.place(in_=self.editor, relx=1.0, x=-16, y=8, anchor="ne")
+        self.find_bar.place(in_=self.editor, relx=1.0, x=-14, y=10, anchor="ne")
         if selection and "\n" not in selection:
             self.find_entry.delete(0, "end")
             self.find_entry.insert(0, selection)
@@ -880,85 +1070,99 @@ class CetirimIDE(tk.Tk):
     # Templates / dialogs
     # ------------------------------------------------------------------
 
+    def _dialog(self, title, size=None):
+        """A modal, themed Toplevel: flat surface, a body the caller fills,
+        centered over the main window. `size` is "WxH"; omit it to let Tk
+        fit the window to its contents. The title shows in the window's own
+        title bar only - repeating it as a heading inside a 400px dialog
+        just says the same thing twice."""
+        T = THEME
+        win = tk.Toplevel(self)
+        win.title(title)
+        win.transient(self)
+        win.configure(bg=T["bg_dark"])
+        win.resizable(False, False)
+        if size:
+            win.geometry(size)
+        win.grab_set()
+        body = tk.Frame(win, bg=T["bg_dark"], padx=18, pady=16)
+        body.pack(fill="both", expand=True)
+        win.bind("<Escape>", lambda e: win.destroy())
+        # Deferred: the caller hasn't filled the body yet, so the requested
+        # size isn't known until the event loop next goes idle.
+        win.after(0, self._center_dialog, win)
+        return win, body
+
+    def _center_dialog(self, win):
+        try:
+            win.update_idletasks()
+            width, height = win.winfo_width(), win.winfo_height()
+            if width <= 1:  # never mapped with an explicit geometry
+                width, height = win.winfo_reqwidth(), win.winfo_reqheight()
+            x = self.winfo_rootx() + (self.winfo_width() - width) // 2
+            y = self.winfo_rooty() + (self.winfo_height() - height) // 3
+            win.geometry(f"+{max(0, x)}+{max(0, y)}")
+        except tk.TclError:
+            pass  # dismissed before the idle callback ran
+
     def show_suggestions(self, _event=None):
         self.show_templates()
         return "break"
 
     def show_templates(self):
         T = THEME
-        win = tk.Toplevel(self)
-        win.title("Templates & autocomplete")
-        win.transient(self)
-        win.geometry("420x390")
-        win.resizable(False, False)
-        win.configure(bg=T["bg_side"])
-        win.grab_set()
-        header = tk.Frame(win, bg=T["titlebar"], height=62)
-        header.pack(fill="x")
-        header.pack_propagate(False)
-        tk.Label(header, text="INSERT A CODE TEMPLATE", bg=T["titlebar"], fg=T["fg_bright"],
-                 font=self.font_section).pack(anchor="w", padx=16, pady=(12, 0))
-        tk.Label(header, text="Templates and language keywords", bg=T["titlebar"], fg=T["fg_dim"],
-                 font=self.font_ui_sm).pack(anchor="w", padx=16)
-        body = tk.Frame(win, bg=T["bg_side"])
-        body.pack(fill="both", expand=True, padx=12, pady=12)
-        box = tk.Listbox(body, font=self.font_mono_sm, height=13, bg=T["bg_dark"], fg=T["fg"],
+        win, body = self._dialog("Insert a code template", "420x440")
+        tk.Label(body, text="Templates and language keywords", bg=T["bg_dark"], fg=T["fg_dim"],
+                 font=self.font_ui_sm, anchor="w").pack(fill="x", pady=(0, 10))
+        frame = tk.Frame(body, bg=T["border"], padx=1, pady=1)
+        frame.pack(fill="both", expand=True)
+        box = tk.Listbox(frame, font=self.font_mono_sm, height=13, bg=T["bg_raise"], fg=T["fg"],
                          selectbackground=T["select_bg"], selectforeground=T["fg_bright"],
-                         highlightthickness=1, highlightbackground=T["border"], highlightcolor=T["accent"],
-                         borderwidth=0, activestyle="none")
+                         highlightthickness=0, borderwidth=0, activestyle="none")
         for item in list(TEMPLATES) + sorted(KEYWORDS):
             box.insert("end", item)
-        box.pack(fill="both", expand=True)
+        scroll = ttk.Scrollbar(frame, orient="vertical", style="Flat.Vertical.TScrollbar", command=box.yview)
+        box.config(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        box.pack(side="left", fill="both", expand=True)
         box.selection_set(0)
 
         def insert(_event=None):
             self.insert_template(box.get("active"))
             win.destroy()
 
-        actions = tk.Frame(win, bg=T["bg_side"])
-        actions.pack(fill="x", padx=12, pady=(0, 12))
-        ttk.Button(actions, text="Cancel", command=win.destroy).pack(side="right")
-        ttk.Button(actions, text="Insert", command=insert, style="Accent.TButton").pack(side="right", padx=(0, 8))
+        actions = tk.Frame(body, bg=T["bg_dark"])
+        actions.pack(fill="x", pady=(14, 0))
+        # Rightmost is the default action, per platform convention.
+        ttk.Button(actions, text="Insert", command=insert, style="Accent.TButton").pack(side="right")
+        ttk.Button(actions, text="Cancel", command=win.destroy).pack(side="right", padx=(0, 8))
         box.bind("<Double-1>", insert)
         box.bind("<Return>", insert)
-        win.bind("<Escape>", lambda e: win.destroy())
         box.focus_set()
 
     def themed_prompt(self, title, message, initial=""):
         """A small themed replacement for Tk's platform-coloured askstring."""
         T = THEME
         result = {"value": None}
-        win = tk.Toplevel(self)
-        win.title(title)
-        win.transient(self)
-        win.configure(bg=T["bg_side"])
-        win.resizable(False, False)
-        win.grab_set()
-        header = tk.Frame(win, bg=T["titlebar"], height=52)
-        header.pack(fill="x")
-        header.pack_propagate(False)
-        tk.Label(header, text=title.upper(), bg=T["titlebar"], fg=T["fg_bright"],
-                 font=self.font_section).pack(anchor="w", padx=16, pady=15)
-        body = tk.Frame(win, bg=T["bg_side"])
-        body.pack(fill="both", expand=True, padx=16, pady=16)
-        tk.Label(body, text=message, bg=T["bg_side"], fg=T["fg"], font=self.font_ui_sm,
-                 wraplength=360, justify="left").pack(anchor="w", pady=(0, 9))
-        entry = tk.Entry(body, width=42, bg=T["bg_dark"], fg=T["fg"], insertbackground=T["cursor"],
-                         relief="flat", highlightthickness=1, highlightbackground=T["border"],
-                         highlightcolor=T["accent"], font=self.font_mono_sm)
+        win, body = self._dialog(title)
+        tk.Label(body, text=message, bg=T["bg_dark"], fg=T["fg"], font=self.font_ui_sm,
+                 wraplength=340, justify="left").pack(anchor="w", pady=(0, 8))
+        border = tk.Frame(body, bg=T["border"], padx=1, pady=1)
+        border.pack(fill="x")
+        entry = tk.Entry(border, width=42, bg=T["bg_raise"], fg=T["fg"], insertbackground=T["cursor"],
+                         relief="flat", highlightthickness=0, borderwidth=0, font=self.font_mono_sm)
         entry.insert(0, initial)
-        entry.pack(fill="x", ipady=6)
-        actions = tk.Frame(body, bg=T["bg_side"])
-        actions.pack(fill="x", pady=(15, 0))
+        entry.pack(fill="x", ipady=6, ipadx=6)
+        actions = tk.Frame(body, bg=T["bg_dark"])
+        actions.pack(fill="x", pady=(16, 0))
 
         def accept(_event=None):
             result["value"] = entry.get()
             win.destroy()
 
-        ttk.Button(actions, text="Cancel", command=win.destroy).pack(side="right")
-        ttk.Button(actions, text="OK", command=accept, style="Accent.TButton").pack(side="right", padx=(0, 8))
+        ttk.Button(actions, text="OK", command=accept, style="Accent.TButton").pack(side="right")
+        ttk.Button(actions, text="Cancel", command=win.destroy).pack(side="right", padx=(0, 8))
         entry.bind("<Return>", accept)
-        win.bind("<Escape>", lambda e: win.destroy())
         entry.focus_set()
         entry.selection_range(0, "end")
         self.wait_window(win)
@@ -988,7 +1192,7 @@ class CetirimIDE(tk.Tk):
         count = len(re.findall(rf"\b{re.escape(old)}\b", source))
         self.editor.delete("1.0", "end")
         self.editor.insert("1.0", re.sub(rf"\b{re.escape(old)}\b", new, source))
-        self.write_console(f"Refactoring complete: renamed {count} occurrence(s) of '{old}' to '{new}'.\n")
+        self.write_console(f"Refactoring complete: renamed {count} occurrence(s) of '{old}' to '{new}'.\n", meta=True)
         self._refresh_all()
 
     # ------------------------------------------------------------------
@@ -1011,36 +1215,51 @@ class CetirimIDE(tk.Tk):
         return symtab, diagnostics
 
     def _add_problem(self, text):
-        T = THEME
+        """One row of the Problems table: severity glyph and phase in the
+        name column, position in the second, message in the third."""
         if text.startswith("✓"):
-            color = T["ok"]
-        elif "WARNING" in text:
-            color, text = T["warn"], "⚠ " + text
-        else:
-            color, text = T["error"], "✖ " + text
-        self.problems.insert("end", text)
-        self.problems.itemconfig("end", foreground=color)
+            self.problems.insert("", "end", text="✓", values=("", text.lstrip("✓ ")), tags=("ok",))
+            return
+        match = DIAGNOSTIC.match(text)
+        if not match:  # never seen in practice - show the raw line rather than dropping it
+            self.problems.insert("", "end", text="✖", values=("", text), tags=("error",))
+            return
+        tag, line, col, message = match.group("tag", "line", "col", "message")
+        warning = tag.endswith("WARNING")
+        phase = tag.rsplit(" ", 1)[0].title()
+        where = f"Line {line}, Col {col}" if line else ""
+        item = self.problems.insert("", "end", text=f"{'⚠' if warning else '✖'}  {phase}",
+                                    values=(where, message.strip()),
+                                    tags=("warn" if warning else "error",))
+        self._problem_lines[item] = int(line) if line else None
 
     def check_code(self):
         symtab, diagnostics = self._analyze_buffer()
         self._last_symtab = symtab
-        self.problems.delete(0, "end")
+        self.problems.delete(*self.problems.get_children())
+        self._problem_lines = {}
         if not diagnostics:
             self._add_problem("✓ No lexical, syntax or semantic problems found.")
-            self.write_console("Check complete: no problems found.\n")
+            self.write_console("Check complete: no problems found.\n", meta=True)
         else:
             for text in diagnostics:
                 self._add_problem(text)
-            self.write_console(f"Check complete: {len(diagnostics)} problem(s) found.\n")
+            self.write_console(f"Check complete: {len(diagnostics)} problem(s) found.\n", meta=True)
+        warnings = sum(1 for text in diagnostics if "WARNING" in text)
+        self._diag_counts = (len(diagnostics) - warnings, warnings)
+        self._checked_src = self.source()
+        self._refresh_diagnostics_status()
+        self.bottom_tabs.badge(self.problems_frame, str(len(diagnostics)) if diagnostics else "")
         if symtab is None:
             self.bottom_tabs.select(self.problems_frame)
         self.refresh_symbols()
         return symtab is not None
 
     def go_to_problem(self, _event=None):
-        match = re.search(r"Line (\d+)", self.problems.get("active"))
-        if match:
-            self.editor.mark_set("insert", f"{match.group(1)}.0")
+        selected = self.problems.selection()
+        line = self._problem_lines.get(selected[0]) if selected else None
+        if line:
+            self.editor.mark_set("insert", f"{line}.0")
             self.editor.see("insert")
             self.editor.focus_set()
 
@@ -1085,12 +1304,12 @@ class CetirimIDE(tk.Tk):
         symtab = self._last_symtab
         if symtab is None:
             tree.insert("", "end", tags=("dim",),
-                        text="— run ✓ Check (F7) with a clean program to populate the symbol table; "
+                        text="— run Check (F7) with a clean program to populate the symbol table; "
                              "problems are listed in the Problems tab —")
             return
         from semantics import type_name
         if symtab.functions:
-            functions_root = tree.insert("", "end", text="Functions", open=True,
+            functions_root = tree.insert("", "end", text="Functions", open=True, tags=("group",),
                                          values=("", f"{len(symtab.functions)} declared"))
             for name, sig in symtab.functions.items():
                 params = ", ".join(
@@ -1107,7 +1326,7 @@ class CetirimIDE(tk.Tk):
                     tree.insert(item, "end", text=sym.name,
                                 values=(type_name(sym.type), f"{mutability} · local · ir: {sym.ir_name}"))
         if symtab.structs:
-            structs_root = tree.insert("", "end", text="Structs", open=True,
+            structs_root = tree.insert("", "end", text="Structs", open=True, tags=("group",),
                                        values=("", f"{len(symtab.structs)} declared"))
             for name, info in symtab.structs.items():
                 item = tree.insert(structs_root, "end", text=f"struct {name}",
@@ -1116,12 +1335,12 @@ class CetirimIDE(tk.Tk):
                     tree.insert(item, "end", text=field_name,
                                 values=(type_name(info.fields[field_name]), "field"))
         if symtab.typedefs:
-            typedefs_root = tree.insert("", "end", text="Typedefs", open=True,
+            typedefs_root = tree.insert("", "end", text="Typedefs", open=True, tags=("group",),
                                         values=("", f"{len(symtab.typedefs)} declared"))
             for name, aliased in symtab.typedefs.items():
                 tree.insert(typedefs_root, "end", text=name, values=(type_name(aliased), "typedef"))
         if symtab.globals:
-            globals_root = tree.insert("", "end", text="Globals", open=True,
+            globals_root = tree.insert("", "end", text="Globals", open=True, tags=("group",),
                                        values=("", f"{len(symtab.globals)} declared"))
             for name, sym in symtab.globals.items():
                 mutability = "var" if sym.mutable else "const"
@@ -1172,8 +1391,8 @@ class CetirimIDE(tk.Tk):
             self.opt_log.insert("end", f"[{t['technique']}] {where}{t['detail']}")
         stats = view["stats"]
         by = stats["by_technique"]
-        self.optimizer_stats.config(text=(f"{stats['original_count']} → {stats['optimized_count']} quads  |  "
-                                          f"removed {stats['removed']}, rewritten {stats['rewritten']}  |  "
+        self.optimizer_stats.config(text=(f"{stats['original_count']} → {stats['optimized_count']} quads  ·  "
+                                          f"removed {stats['removed']}, rewritten {stats['rewritten']}  ·  "
                                           f"const-prop {by.get('constant-propagation', 0)}, "
                                           f"algebraic {by.get('algebraic-simplification', 0)}, "
                                           f"DCE {by.get('dead-code-elimination', 0)}"))
@@ -1213,11 +1432,11 @@ class CetirimIDE(tk.Tk):
         self.console.delete("1.0", "end")
         self.console.config(state="disabled")
         self.clear_current_line()
-        self.callstack_list.delete(0, "end")
-        self.vars_list.delete(0, "end")
+        self.callstack_list.delete(*self.callstack_list.get_children())
+        self.vars_list.delete(*self.vars_list.get_children())
         self.trace_list.delete(0, "end")
-        self.write_console("$ Debugging program…\n" if debug else "$ Running program…\n")
-        self.status_run.config(text="Debugging…" if debug else "Running…")
+        self.write_console("$ Debugging program…\n" if debug else "$ Running program…\n", meta=True)
+        self.set_run_status("Debugging…" if debug else "Running…", THEME["accent"])
         self.stop_btn.config(state="normal")
         self.bottom_tabs.select(0)
 
@@ -1278,12 +1497,15 @@ class CetirimIDE(tk.Tk):
     def debug_program(self):
         self.run_program(debug=True)
 
+    def set_run_status(self, text, color=None):
+        self.status_run.config(text=text, foreground=color or THEME["fg_dim"])
+
     def on_debug_pause(self, line):
         self.highlight_current_line(line)
         self.refresh_debug_panels()
         self.step_btn.config(state="normal")
         self.continue_btn.config(state="normal")
-        self.status_run.config(text=f"Paused at line {line}")
+        self.set_run_status(f"Paused at line {line}", THEME["warn"])
 
     def append_trace(self, line):
         executor = self.executor
@@ -1298,20 +1520,22 @@ class CetirimIDE(tk.Tk):
 
     def refresh_debug_panels(self):
         executor = self.executor
-        self.callstack_list.delete(0, "end")
+        stack = self.callstack_list
+        stack.delete(*stack.get_children())
         for name in (list(reversed(executor.call_names)) or ["(top level)"]):
-            self.callstack_list.insert("end", name)
-        self.vars_list.delete(0, "end")
-        self.vars_list.insert("end", "-- Locals --")
-        for name, value in executor.frame.items():
-            if not name.startswith("_t"):
-                self.vars_list.insert("end", f"{self._display_name(name)} = {value!r}")
+            stack.insert("", "end", text=name)
+        variables = self.vars_list
+        variables.delete(*variables.get_children())
+        self._fill_scope(variables, "Locals", executor.frame)
         if executor.frame is not executor.globals:
-            self.vars_list.insert("end", "-- Globals --")
-            for name, value in executor.globals.items():
-                if not name.startswith("_t"):
-                    self.vars_list.insert("end", f"{self._display_name(name)} = {value!r}")
+            self._fill_scope(variables, "Globals", executor.globals)
         self.refresh_watches()
+
+    def _fill_scope(self, tree, title, scope):
+        group = tree.insert("", "end", text=title, open=True, tags=("group",))
+        for name, value in scope.items():
+            if not name.startswith("_t"):
+                tree.insert(group, "end", text=self._display_name(name), values=(repr(value),))
 
     def add_watch(self):
         name = self.watch_entry.get().strip()
@@ -1321,16 +1545,18 @@ class CetirimIDE(tk.Tk):
             self.refresh_watches()
 
     def remove_watch(self, _event=None):
-        selected = self.watch_list.curselection()
+        selected = self.watch_list.selection()
         if selected:
-            del self.watches[selected[0]]
+            del self.watches[self.watch_list.index(selected[0])]
             self.refresh_watches()
 
     def refresh_watches(self):
-        self.watch_list.delete(0, "end")
+        self.watch_list.delete(*self.watch_list.get_children())
         for name in self.watches:
             value, found = self._lookup_watch(name)
-            self.watch_list.insert("end", f"{name} = {value!r}" if found else f"{name} = <not in scope>")
+            self.watch_list.insert("", "end", text=name,
+                                   values=(repr(value) if found else "<not in scope>",),
+                                   tags=("watched",) if found else ("dim",))
 
     def _lookup_watch(self, name):
         executor = self.executor
@@ -1369,7 +1595,7 @@ class CetirimIDE(tk.Tk):
         self.clear_current_line()
         self.step_btn.config(state="disabled")
         self.continue_btn.config(state="disabled")
-        self.status_run.config(text="Running…")
+        self.set_run_status("Running…", THEME["accent"])
         self.executor.dbg_continue()
 
     def debug_stop(self):
@@ -1410,7 +1636,7 @@ class CetirimIDE(tk.Tk):
         return "break"
 
     def finish_execution(self, message):
-        self.write_console(message)
+        self.write_console(message, meta=True)
         self.terminal_entry.config(state="disabled")
         self.terminal_send.config(state="disabled")
         self.pending_input = None
@@ -1418,13 +1644,13 @@ class CetirimIDE(tk.Tk):
         self.step_btn.config(state="disabled")
         self.continue_btn.config(state="disabled")
         self.stop_btn.config(state="disabled")
-        self.status_run.config(text="")
+        self.set_run_status("")
         self.executor = None
         self.refresh_watches()
 
-    def write_console(self, message):
+    def write_console(self, message, meta=False):
         self.console.config(state="normal")
-        self.console.insert("end", message)
+        self.console.insert("end", message, ("meta",) if meta else ())
         self.console.see("end")
         self.console.config(state="disabled")
 
