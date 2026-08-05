@@ -366,11 +366,61 @@ def driver():
     check("tab strip selects by index too", ide.bottom_tabs.select() != str(ide.symbols_frame))
 
     # ---- Test 17: the outline, caret line and font-size controls ------------
-    load("struct Point {\n    int x;\n}\n\nvoid main() {\n    print(1);\n}\n")
-    outline_rows = [ide.outline.item(i, "text") for i in ide.outline.get_children()]
+    def outline_rows(parent=""):
+        return [ide.outline.item(i, "text") for i in ide.outline.get_children(parent)]
+
+    def outline_child_rows(needle):
+        """Rows nested under the first top-level row containing `needle`."""
+        for i in ide.outline.get_children(""):
+            if needle in ide.outline.item(i, "text"):
+                return outline_rows(i)
+        return []
+
+    load("struct Point {\n    int x;\n};\n\nvoid main() {\n    print(1);\n}\n")
     check("outline lists the struct and the function",
-          any("Point" in r for r in outline_rows) and any("main" in r for r in outline_rows),
-          repr(outline_rows))
+          any("Point" in r for r in outline_rows()) and any("main" in r for r in outline_rows()),
+          repr(outline_rows()))
+    check("struct fields nest under the struct",
+          any("x: int" in r for r in outline_child_rows("Point")),
+          repr(outline_child_rows("Point")))
+
+    # An inline `typedef struct C {...} R;` used to be split by the outline's
+    # regex at the first ';', listing the field `r` as a typedef. It has to
+    # produce a struct row (with its fields) plus the alias, and nothing else.
+    load("const int LIMIT = 5;\n"
+         "typedef struct Color { int r; int g; int b; } RGB;\n"
+         "void main() {\n"
+         "    var int count;\n"
+         "    let total = 0;\n"
+         "    print(count, total);\n"
+         "}\n")
+    tops = [r.strip() for r in outline_rows()]
+    check("inline typedef-struct yields a struct row and an alias row, not a field",
+          tops == ["◇  LIMIT: int", "◆  Color", "≡  RGB: struct Color", "ƒ  main(): void"],
+          repr(tops))
+    check("outline lists global constants",
+          any("LIMIT: int" in r for r in tops), repr(tops))
+    check("struct fields of an inline typedef nest under it",
+          [r.split()[1] for r in outline_child_rows("Color")] == ["r:", "g:", "b:"],
+          repr(outline_child_rows("Color")))
+    check("function locals nest under the function",
+          any("count: int" in r for r in outline_child_rows("main"))
+          and any("total" in r for r in outline_child_rows("main")),
+          repr(outline_child_rows("main")))
+    check("outline navigates to a nested row's own line",
+          ide.outline.item(
+              [i for i in ide.outline.get_children(
+                  [c for c in ide.outline.get_children("") if "main" in ide.outline.item(c, "text")][0])
+               if "count" in ide.outline.item(i, "text")][0], "values")[0] in (4, "4"),
+          "expected the 'var int count;' line")
+
+    # A buffer that recovers to nothing must not blank the tree.
+    before_rows = outline_rows()
+    load("const int LIMIT = 5;\n@@@\n")
+    check("a mid-edit unparseable buffer keeps the last good outline",
+          outline_rows() == before_rows, repr(outline_rows()))
+
+    load("struct Point {\n    int x;\n};\n\nvoid main() {\n    print(1);\n}\n")
     ide.editor.mark_set("insert", "6.0")
     ide._sync_caret()
     caret = ide.editor.tag_ranges("cursor_line")

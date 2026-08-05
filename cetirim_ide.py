@@ -9,6 +9,7 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from ast_nodes import Node
 from parser import parse_source
 from scanner import KEYWORDS, Scanner, TT
 
@@ -106,6 +107,91 @@ def hairline(parent, side="top", **pack_options):
                    height=1 if horizontal else 0, width=0 if horizontal else 1)
     bar.pack(side=side, fill="x" if horizontal else "y", **pack_options)
     return bar
+
+
+def type_text(node):
+    """Spell an AST type node the way the source spells it, for an outline
+    label: `int`, `struct Point`, `int[3]`, `(int, int)`.
+
+    Deliberately independent of `semantics.type_name` (which the Symbols tab
+    uses): that one renders *resolved* types and needs a `SymbolTable`, while
+    the outline runs on a bare parse of a buffer that may not even analyze
+    cleanly yet.
+    """
+    if node is None:
+        return ""
+    if node.kind == "Type":
+        return node.fields["name"]
+    if node.kind in ("StructType", "StructDef"):
+        return f"struct {node.fields['name']}"
+    if node.kind == "TupleType":
+        return "(" + ", ".join(type_text(e) for e in node.fields["elements"]) + ")"
+    if node.kind == "ArrayType":
+        size = node.fields["size"]
+        if size is None:
+            inner = ""
+        elif size.kind == "Literal":
+            inner = str(size.fields["lexeme"])
+        elif size.kind == "Identifier":
+            inner = size.fields["name"]
+        else:
+            inner = "…"          # a computed size - the shape is what matters
+        return f"{type_text(node.fields['base'])}[{inner}]"
+    return node.kind
+
+
+def signature_text(fn):
+    """`main(): void` / `add(int, int): int` - a function's outline label.
+    Parameter *types* only: names would push the useful part (the return
+    type) off the end of a narrow sidebar."""
+    params = ", ".join(type_text(p.fields["type"]) for p in fn.fields["params"])
+    return f"{fn.fields['name']}({params}): {type_text(fn.fields['return_type'])}"
+
+
+def collect_locals(node, out):
+    """Walk a function body and append `(line, name, type)` for every local
+    binding it introduces. `type` is `""` where the source declares none
+    (a `let`, a `for`-in variable).
+
+    The walk is generic - it recurses through every Node/list field rather
+    than enumerating the statement kinds that can hold a block - so a
+    declaration nested inside an `if`/`for`/`while`/`try` body is found
+    without this needing to know the statement vocabulary, and a new
+    block-bearing statement in grammar.py needs no change here.
+
+    The four binding forms, each keyed off the node kind that introduces it:
+    `VarDecl` (`var`/`val`, one entry per declarator, each with its own
+    line), `LetDecl` (no declared type to show, `None` names are `_`
+    discards), `MultiAssign` (typed multi-assign declares ordinary locals
+    too), and the loop/catch variables of `ForInStmt`/`CatchClause`.
+    Parameters are not locals and are already shown in the function's own
+    signature label.
+    """
+    if isinstance(node, list):
+        for item in node:
+            collect_locals(item, out)
+        return
+    if not isinstance(node, Node):
+        return
+
+    if node.kind == "VarDecl":
+        for d in node.fields["declarators"]:
+            out.append((d.line or node.line, d.fields["name"], type_text(d.fields["type"])))
+    elif node.kind == "LetDecl":
+        for name in node.fields["names"]:
+            if name is not None:
+                out.append((node.line, name, ""))
+    elif node.kind == "MultiAssign":
+        for lvalue in node.fields["lvalues"]:
+            if lvalue["name"] is not None:
+                out.append((node.line, lvalue["name"], type_text(lvalue["type"])))
+    elif node.kind == "ForInStmt":
+        out.append((node.line, node.fields["name"], ""))
+    elif node.kind == "CatchClause":
+        out.append((node.line, node.fields["name"], "string"))
+
+    for value in node.fields.values():
+        collect_locals(value, out)
 
 
 class PanelTabs(ttk.Frame):
@@ -209,6 +295,10 @@ class CetirimIDE(tk.Tk):
         self._problem_lines = {}   # problems-tree item id -> diagnostic line
         self._checked_src = None   # source snapshot the problem counts describe
         self._diag_counts = (0, 0)
+        self._outline_src = None   # source snapshot the outline tree was parsed from
+        self._outline_path = None  # and the file it came from, so a new file always rebuilds
+        self._outline_count = 0    # top-level rows in it, to spot a mid-edit shrink
+        self._outline_seen = {}    # outline item id -> times used, for the #n suffix
         self._find_matches = []
         self._find_pos = -1
         self._find_term = None
@@ -426,7 +516,9 @@ class CetirimIDE(tk.Tk):
             height = self.vsplit.winfo_height()
             if height > 500:
                 self.vsplit.sashpos(0, height - 280)
-            self.hsplit.sashpos(0, 220)
+            # 220 fit the old name-only outline; rows now carry a type or a
+            # signature too, so they start out readable rather than clipped.
+            self.hsplit.sashpos(0, 280)
         except tk.TclError:
             pass
 
@@ -450,7 +542,8 @@ class CetirimIDE(tk.Tk):
         wrap.pack(fill="both", expand=True)
         self.outline = ttk.Treeview(wrap, show="tree", selectmode="browse", style="Panel.Treeview")
         for kind, color in (("function", THEME["syn_function"]), ("struct", THEME["syn_type"]),
-                            ("typedef", THEME["syn_keyword"])):
+                            ("typedef", THEME["syn_keyword"]), ("const", THEME["syn_number"]),
+                            ("field", THEME["fg_dim"]), ("variable", THEME["fg"])):
             self.outline.tag_configure(kind, foreground=color)
         self._scrolled(self.outline)
         self.outline.pack(side="left", fill="both", expand=True, padx=(6, 0))
@@ -943,16 +1036,108 @@ class CetirimIDE(tk.Tk):
         self.breakpoints.symmetric_difference_update({line})
         self.refresh_line_numbers()
 
+    OUTLINE_GLYPHS = {"function": "ƒ", "struct": "◆", "typedef": "≡",
+                      "const": "◇", "field": "◦", "variable": "•"}
+
     def refresh_outline(self):
-        self.outline.delete(*self.outline.get_children())
+        """Rebuild the sidebar tree from a real parse of the buffer.
+
+        This runs off `parse_source`, not a regex over the text: the shape it
+        has to report - which `struct` keyword opens a declaration and which
+        one merely types a field, where an inline `typedef struct C {...} R;`
+        ends - is exactly what a parser decides and a regex can only guess
+        at. The parser's `many_rec` recovery hands back a *partial* AST when
+        the buffer is mid-edit, which is what makes this usable on every
+        keystroke rather than only on a clean file.
+        """
         src = self.source()
-        pattern = re.compile(r"^\s*(?:struct\s+(\w+)|typedef\s+.+?\s+(\w+)\s*;|(?:int|float|char|string|bool|void)\s+(\w+)\s*\()", re.M)
-        glyphs = {"function": "ƒ", "struct": "◆", "typedef": "≡"}
-        for match in pattern.finditer(src):
-            name = next(item for item in match.groups() if item)
-            kind = "struct" if match.group(1) else "typedef" if match.group(2) else "function"
-            line = src[:match.start()].count("\n") + 1
-            self.outline.insert("", "end", text=f" {glyphs[kind]}  {name}", values=(line,), tags=(kind,))
+        if src == self._outline_src and self.file_path == self._outline_path:
+            return                              # nothing changed - keep the tree (and its scroll)
+        try:
+            ast, syntax_errors, lex_errors = parse_source(src)
+            declarations = ast.fields["declarations"]
+        except Exception:
+            return                              # unparseable mid-edit: leave the last good tree up
+        # Half-written code makes recovery *drop* the declaration being typed,
+        # so rebuilding on every keystroke would make whole functions blink out
+        # of the tree and back. While the buffer has errors, a shrinking
+        # outline is assumed to be that, and the last complete one stays up; it
+        # still grows immediately, and any clean parse always rebuilds (so
+        # deleting a function really does remove it). Loading a different file
+        # is not an edit, though - its outline always replaces the old one,
+        # however few declarations survive.
+        same_file = self._outline_path == self.file_path
+        if (same_file and (syntax_errors or lex_errors)
+                and len(declarations) < self._outline_count):
+            return
+        self._outline_src = src
+        self._outline_path = self.file_path
+        self._outline_count = len(declarations)
+
+        # Rebuilding drops both the scroll offset and every expand/collapse
+        # the user set, so they are captured and replayed. Item ids are keyed
+        # by name rather than by line so that typing *above* a struct doesn't
+        # silently re-expand it.
+        open_state = {iid: bool(self.outline.item(iid, "open")) for iid in self._outline_ids()}
+        top = self.outline.yview()[0]
+        self.outline.delete(*self.outline.get_children())
+        self._outline_seen = {}
+
+        for decl in declarations:
+            if decl.kind == "VarDecl":          # only `const` reaches global scope
+                for d in decl.fields["declarators"]:
+                    self._outline_row(open_state, "", "const", d.fields["name"],
+                                      f"{d.fields['name']}: {type_text(d.fields['type'])}",
+                                      d.line or decl.line)
+            elif decl.kind == "StructDecl":
+                self._outline_struct(open_state, decl.fields["name"], decl.fields["fields"], decl.line)
+            elif decl.kind == "TypedefDecl":
+                aliased = decl.fields["aliased_type"]
+                if aliased is not None and aliased.kind == "StructDef":
+                    # `typedef struct Color {...} RGB;` both defines a struct
+                    # and aliases it, so it earns a row of each.
+                    self._outline_struct(open_state, aliased.fields["name"],
+                                         aliased.fields["fields"], aliased.line or decl.line)
+                self._outline_row(open_state, "", "typedef", decl.fields["name"],
+                                  f"{decl.fields['name']}: {type_text(aliased)}", decl.line)
+            elif decl.kind == "FunctionDecl":
+                parent = self._outline_row(open_state, "", "function", decl.fields["name"],
+                                           signature_text(decl), decl.line)
+                locals_found = []
+                collect_locals(decl.fields["body"], locals_found)
+                for line, name, typed in sorted(locals_found, key=lambda item: item[0] or 0):
+                    self._outline_row(open_state, parent, "variable", name,
+                                      f"{name}: {typed}" if typed else name, line)
+
+        self.outline.yview_moveto(top)
+
+    def _outline_ids(self, parent=""):
+        for iid in self.outline.get_children(parent):
+            yield iid
+            yield from self._outline_ids(iid)
+
+    def _outline_struct(self, open_state, name, fields, line):
+        parent = self._outline_row(open_state, "", "struct", name, name, line)
+        for f in fields:
+            self._outline_row(open_state, parent, "field", f.fields["name"],
+                              f"{f.fields['name']}: {type_text(f.fields['type'])}",
+                              f.line or line)
+
+    def _outline_row(self, open_state, parent, kind, key, label, line):
+        """Insert one row under `parent`, restoring its previous open state.
+
+        `key` is the row's *name*, not its position, so the id survives edits
+        elsewhere in the file; a `#n` suffix disambiguates the genuine
+        duplicates (a local shadowed in a nested block, two same-named
+        declarations in a broken buffer)."""
+        iid = f"{parent}/{kind}:{key}"
+        self._outline_seen[iid] = self._outline_seen.get(iid, 0) + 1
+        if self._outline_seen[iid] > 1:
+            iid = f"{iid}#{self._outline_seen[iid]}"
+        return self.outline.insert(parent, "end", iid=iid,
+                                   text=f" {self.OUTLINE_GLYPHS[kind]}  {label}",
+                                   values=(line or 1,), tags=(kind,),
+                                   open=open_state.get(iid, True))
 
     def go_to_outline(self, _event=None):
         selected = self.outline.selection()
