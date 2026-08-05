@@ -104,15 +104,30 @@ would fail the suite. Run it directly to see all five:
 python interpreter.py tests/sem_multi_errors.src
 ```
 
-Recovery is implemented at all three front-end phases:
+Recovery is implemented at all three front-end phases, and the suite asserts
+it at each one rather than only demonstrating it:
 
 - **Scanner** — emits an `ERROR` token and resumes, so every valid token after
-  a bad one is still reported (`test_errors.src`, `tests/lex_error.src`).
+  a bad one is still reported. `test_errors.src` puts four different lexical
+  errors between otherwise valid declarations, and `run_tests.py`'s
+  `check_scanner_recovery` diffs its whole scanner report against
+  `test_errors_tokens.txt`. Counting diagnostics would prove nothing here —
+  a lexical error never stops the scan, so a scanner that gave up after the
+  first one would still report an error and exit `2`; what gives it away is
+  the 30-token stream getting shorter, which the golden diff catches.
 - **Parser** — `many_rec` synchronizes and skips to the next declaration or
   statement, with a guaranteed one-token minimum advance so a malformed input
-  cannot loop forever (`tests/stray_brace.src`).
+  cannot loop forever. `tests/syn_multi_errors.src` has a missing semicolon in
+  each of two functions and requires `[SYNTAX ERROR]` twice, so recovery
+  across a declaration boundary is asserted; `tests/stray_brace.src` pins the
+  termination half of the same combinator.
 - **Semantic analyser** — accumulates diagnostics instead of raising, which is
-  what `sem_multi_errors.src` demonstrates.
+  what `sem_multi_errors.src` asserts, at five.
+
+```bash
+python scanner.py test_errors.src              # four errors, stream continues
+python interpreter.py tests/syn_multi_errors.src   # both mistakes reported
+```
 
 ---
 
@@ -208,6 +223,7 @@ python interpreter.py check5_io_heap.src < check5_io_heap.in
 python run_tests.py
 ```
 
-79 checks: 10 positive programs × (tokens, IR, output), 14 feature fixtures,
-24 negative fixtures, the optimizer report, and the `-O` differential re-runs
-(every positive and feature fixture, plus every exit-3 negative fixture).
+81 checks: 10 positive programs × (tokens, IR, output), 14 feature fixtures,
+25 negative fixtures, the scanner-recovery report, the optimizer report, and
+the `-O` differential re-runs (every positive and feature fixture, plus every
+exit-3 negative fixture).
