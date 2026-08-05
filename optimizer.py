@@ -30,7 +30,8 @@ Viewability: `optimize()` returns an `OptResult` carrying the original
 quads, the optimized quads, and a `records` list with one entry per
 transformation (technique, kind, the original quad index, the source line,
 the quad text before and after, and a human-readable explanation).
-`build_view()` renders that as a JSON payload for the web IDE; `format_report()`
+`build_view()` renders that as the payload the IDE's Optimizer tab (and the
+`--json` flag) consumes; `format_report()`
 renders it as an annotated text listing for the terminal. See this module's
 CLI at the bottom, and README.md's "IR Optimization" section for the JSON
 schema.
@@ -821,7 +822,7 @@ def _quad_json(index, q, **extra):
 
 
 def build_view(result, source_file):
-    """Build the JSON-serializable payload the web IDE renders.
+    """Build the JSON-serializable payload the IDE's Optimizer tab renders.
 
     Both listings are included in full, each quad tagged so the IDE can
     paint a side-by-side diff without computing one itself: an original

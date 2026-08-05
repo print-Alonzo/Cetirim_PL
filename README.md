@@ -37,6 +37,7 @@ The language supports typed variable/constant declarations, control flow (if-els
 ├── ir.py                                       # Intermediate code generator: AST + SymbolTable -> quadruples
 ├── optimizer.py                                # Optional IR optimizer + viewable before/after report (JSON for the IDE)
 ├── interpreter.py                              # VM: executes quadruples; CLI entry point for running a program
+├── cetirim_ide.py                              # Tkinter IDE: editor, integrated debugger, optimizer view
 ├── run_tests.py                                # Golden-output test runner (--update to regenerate goldens)
 ├── build.py                                    # Packages the runtime modules into cetirim.pyz (stdlib zipapp)
 ├── cetirim.pyz                                 # Built standalone binary — rebuild with `python build.py`
@@ -63,6 +64,34 @@ The language supports typed variable/constant declarations, control flow (if-els
 
 - Python 3.8 or higher
 - No external dependencies — standard library only
+
+## Cetirim IDE
+
+Launch the graphical development environment with:
+
+```bash
+python cetirim_ide.py
+```
+
+The IDE is connected to this project's scanner, parser, and interpreter. It provides syntax highlighting and lexical-error marking, Ctrl+Space templates / keyword autocomplete, a navigable code outline, rename refactoring (`Ctrl+R`), problem checking, integrated execution (`F5`), and adjustable editor font size. The Output tab behaves as an interactive terminal: when a program calls `input(...)`, type the requested value there and press Enter or **Send**.
+
+### Debugger
+
+Click a line number in the gutter to toggle a breakpoint on that line. Press **Debug** or `F6` to run the program in debug mode. Execution pauses when it reaches a breakpoint, highlighting the current line in the editor. While paused, the **Debug** tab shows the active **Call Stack** (which function is executing, and who called it) and the **Variables** currently in scope (locals, then globals):
+
+- **Step ⏵** — run just the next source line, then pause again.
+- **Continue ⏭** — resume running until the next breakpoint (or the program ends).
+- **Stop ⏹** — abort the debug session.
+
+Breakpoints can be toggled even while a debug session is running.
+
+The **Debug** tab also has a **Watch** panel: type a variable name and click **Add** (or press Enter) to track it — its value refreshes every time execution pauses, showing `<not in scope>` if that variable isn't currently live. Double-click a watch entry to remove it.
+
+The **Trace** tab logs every source line executed during a debug session, in order, along with which function it ran in — a full execution history, not just the lines you stopped on. It's populated even while just using Continue, not only while stepping.
+
+### Optimizer view
+
+Press **Optimize** (toolbar or Tools menu) to run the [IR optimizer](#ir-optimization) on the current program and open the **Optimizer** tab: the original quad listing color-coded by each quad's fate (red = removed, amber = rewritten), the optimized listing beside it, the transformation log (double-click an entry to jump to the source line it came from), and a stats summary — how many quads survived, and how much work each of the three techniques found. The view is display-only: **Run** and **Debug** always execute the unoptimized IR, so breakpoints keep lining up with source lines (the test suite's differential `-O` checks prove the optimized IR produces byte-identical output anyway).
 
 ---
 
@@ -291,8 +320,10 @@ their bounds and key checks can raise.
 
 ### JSON payload for the IDE
 
-`--json` emits a self-contained payload the web IDE can render as a
-side-by-side diff without doing any analysis of its own:
+`--json` emits a self-contained payload a viewer can render as a
+side-by-side diff without doing any analysis of its own. The IDE's
+Optimizer tab shows exactly this view — it calls `build_view()` directly
+rather than shelling out for the JSON:
 
 ```json
 {
