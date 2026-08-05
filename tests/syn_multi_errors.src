@@ -1,0 +1,21 @@
+// Negative fixture: error recovery in the parser.
+// Two *separate* missing semicolons, in two different functions. The parser
+// is expected to report both in one run rather than stopping at the first,
+// which is the parser-side half of the checklist's "Error Recovery" row
+// (tests/sem_multi_errors.src is the semantic-analyser half).
+//
+// Recovery here is `many_rec`'s synchronize-and-skip: after a failed
+// declaration it discards tokens up to the next statement or declaration
+// boundary and resumes, so a mistake in `first` does not hide the one in
+// `main`. tests/stray_brace.src pins the other property of the same
+// combinator - that a token it cannot use still forces forward progress,
+// so recovery terminates.
+int first() {
+    var int a = 1
+    return a;
+}
+
+void main() {
+    var int b = 2
+    print(first(), b);
+}
