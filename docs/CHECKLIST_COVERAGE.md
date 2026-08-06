@@ -223,7 +223,7 @@ python interpreter.py checks/check5_io_heap.src < checks/check5_io_heap.in
 python run_tests.py
 ```
 
-81 checks: 10 positive programs × (tokens, IR, output), 14 feature fixtures,
-25 negative fixtures, the scanner-recovery report, the optimizer report, and
-the `-O` differential re-runs (every positive and feature fixture, plus every
-exit-3 negative fixture).
+84 checks: 10 positive programs × (tokens, IR, output), 15 feature fixtures,
+25 negative fixtures, the scanner-recovery report, the optimizer report, the
+optimizer round-cap check, and the `-O` differential re-runs (every positive
+and feature fixture, plus every exit-3 negative fixture).

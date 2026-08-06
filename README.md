@@ -54,7 +54,7 @@ The language supports typed variable/constant declarations, control flow (if-els
 │   └── ...                                     #   prog2_loops_arrays … prog5_advanced, same pattern
 ├── checks/                                     # Rubric checklist-coverage programs, same .src/.in/goldens pattern:
 │   └── ...                                     #   check1_declarations … check5_io_heap
-└── tests/                                      # 14 feature fixtures (+ golden output), 25 negative fixtures,
+└── tests/                                      # 15 feature fixtures (+ golden output), 25 negative fixtures,
                                                 #   and the scanner-recovery fixture (test_errors.src + its golden)
 ```
 
@@ -362,7 +362,8 @@ rather than shelling out for the JSON:
   "stats": {
     "original_count": 132, "optimized_count": 118, "removed": 14, "rewritten": 9,
     "by_technique": { "constant-propagation": 12, "algebraic-simplification": 1,
-                      "dead-code-elimination": 14 }
+                      "dead-code-elimination": 14 },
+    "converged": true
   }
 }
 ```
@@ -375,6 +376,7 @@ rather than shelling out for the JSON:
 | `line` | Source line, present on every quad and every transformation — use it to highlight the statement a quad came from. |
 | `transformations[]` | The log, in the order the changes were applied. `after` is `null` when the quad was removed. `detail` is a ready-to-display sentence. |
 | `kind` | One of `propagate`, `fold`, `simplify`, `remove-unreachable`, `remove-jump`, `remove-dead`, `remove-label`. |
+| `stats.converged` | `false` when the fixpoint loop stopped on its round cap with work still being found. The listing is still correct — just not as reduced as it could be — so a viewer should label it rather than hide it. |
 
 `version` is the payload's schema version; bump it if any field above changes
 meaning, so the IDE can tell old payloads from new ones.
@@ -388,6 +390,14 @@ rounds: 22 propagations/folds, 5 simplifications, 32 removals).
 ```bash
 python optimizer.py tests/optimizer_demo.src
 ```
+
+The three techniques run in a loop until a round changes nothing, capped at
+ten rounds. Real programs settle in two or three, but dead store elimination
+can only peel the outermost link off a chain of dead stores per round, so a
+long enough chain runs the loop out — `tests/optimizer_deep_chain.src` is that
+case. A capped run is reported, not hidden: the report gains a `Note` line and
+`stats.converged` is `false`. What it leaves behind are quads the unoptimized
+program would have run anyway, so the program still behaves identically.
 
 ---
 
@@ -404,16 +414,19 @@ python run_tests.py
 python run_tests.py --update
 ```
 
-The suite is **59 checks**: 5 sample programs (token stream + IR + output each),
-13 feature fixtures under `tests/` (one language feature apiece — dynamic array
-sizes, default parameters, `_` discard, parameter passing, nested structs, …),
-17 negative fixtures that must fail at a specific phase (exit `2` for
-lexical/syntax/semantic/IR errors, `3` for runtime errors), the optimizer report
-golden, and 23 differential optimizer checks.
+The suite is **84 checks**: 10 programs (the 5 `samples/` programs and the 5
+`checks/` checklist-coverage programs, each contributing one check that diffs
+its token stream, IR listing, and output together), 15 feature fixtures under
+`tests/` (one language feature apiece — dynamic array sizes, default
+parameters, `_` discard, parameter passing, nested structs, …), 25 negative
+fixtures that must fail at a specific phase (exit `2` for
+lexical/syntax/semantic/IR errors, `3` for runtime errors), the scanner
+recovery check, the optimizer report golden, the optimizer round-cap check, and
+31 differential optimizer checks.
 
 The differential checks are how the optimizer is held to its contract: every
-sample program and feature fixture is run a second time with `-O` and must
-produce byte-identical output against the *same* golden, and every runtime-error
+program and feature fixture is run a second time with `-O` and must produce
+byte-identical output against the *same* golden, and every runtime-error
 negative fixture must still fail identically with `-O`. An optimizer that needed
 its own expected-output file would by definition have changed the program's
 behavior, so sharing the goldens is the point.

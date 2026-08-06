@@ -162,6 +162,36 @@ left out because they're outside this project's scope:
     A new opcode added to `ir.py` without a row there raises `OptimizerError`
     rather than being silently mis-analyzed, but it does have to be added by
     hand.
+  - **The fixpoint loop is capped at ten rounds** (`optimizer._MAX_ROUNDS`), and
+    a long enough chain of dead stores reaches that cap. Dead store elimination
+    computes its live-name set once per round, so it can only remove the
+    outermost link of a chain per pass: deleting the store to `a14` is what
+    makes `a13` dead, which is not noticed until the next round. Programs
+    written by hand settle in two or three rounds — `tests/optimizer_deep_chain.src`
+    is a deliberately over-long chain that does not. A capped run is reported
+    rather than hidden (a `Note` line in the report, `stats.converged` false in
+    the `--json` payload, pinned by `run_tests.check_optimizer_cap_note`), and
+    what it leaves behind are quads the unoptimized program would have run
+    anyway — so the output is less reduced, never wrong. Making one round
+    iterate to an inner fixpoint would fix it, at the cost of changing every
+    reported round count.
+  - **`CAST` is in `_PURE_OPS`, so a `CAST` nothing reads is deletable even
+    though `_cast_const` can raise.** `ord()` on a multi-character string
+    raises, and `int()` on a non-numeric string raises. This is currently
+    unreachable, not merely unlikely: `ir.py` emits `CAST` only for the three
+    semantics-approved numeric promotions (`_gen_expr_coerced`,
+    `_gen_char_promoted`), so its operand is always a number or a genuine
+    length-1 `char`. It is nonetheless the one member of the deletable set that
+    isn't guarded the way `DIV`/`MOD`/`ARR_NEW` are in `_is_removable`, and it
+    would need a guard first if the language ever gained a general cast syntax.
+  - **Redundant-jump removal takes one jump per round.**
+    `_remove_redundant_jumps` scans the pre-compaction list and stops at the
+    first quad that is not a `LABEL`/`NOP`, including a `JMP` the same sweep
+    has already marked dead — so a stack of `JMP L; JMP L; LABEL L` loses one
+    jump per round instead of all of them at once. Only the second and later
+    jumps in such a stack are unreachable anyway, so `_remove_unreachable`
+    normally gets them first; the effect is cosmetic. (The `NOP` case is dead
+    code in both senses: nothing in `ir.py` emits a `NOP`.)
 - **Python's native numeric semantics** — integers are arbitrary-precision
   (no overflow behavior to define or test) and floats are native Python
   doubles; the language doesn't define its own overflow/precision rules the
