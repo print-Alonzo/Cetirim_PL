@@ -1,15 +1,5 @@
-"""Build cetirim.pyz: a single self-contained zipapp bundling the whole
-scanner -> parser -> semantics -> IR -> VM pipeline, runnable with nothing
-but a stdlib Python 3.8+ interpreter (no pip install, no external build
-tool) - this is the project's "interpreter software binaries" deliverable.
-
-    python build.py            build cetirim.pyz at the repo root
-
-Then run it exactly like interpreter.py:
-
-    python cetirim.pyz <source_file> [--ir] [--trace] [--symbols] [-O]
-    ./cetirim.pyz <source_file>        (Unix - the archive is directly executable)
-"""
+# builds cetirim.pyz, a single-file zipapp of the whole pipeline
+# usage: python build.py, then run cetirim.pyz same as interpreter.py
 
 import shutil
 import tempfile
@@ -19,9 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 OUTPUT = ROOT / "cetirim.pyz"
 
-# The modules the pipeline actually needs at runtime - deliberately not
-# "every .py file in the repo root", which would also sweep in run_tests.py
-# and whatever ad-hoc scripts happen to live there.
+# only the modules the pipeline needs at runtime, not everything in the repo root
 MODULES = [
     "scanner.py",
     "ast_nodes.py",
@@ -30,7 +18,7 @@ MODULES = [
     "parser.py",
     "semantics.py",
     "ir.py",
-    "optimizer.py",  # imported lazily by interpreter.py, but only when -O is passed
+    "optimizer.py",  # only used when -O is passed
     "interpreter.py",
 ]
 

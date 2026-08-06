@@ -1,18 +1,3 @@
-"""Thin CLI driver for the Parser phase.
-
-Phase handoff: receives source text, runs `scanner.py`'s `Scanner` to get a
-token list, then `grammar_engine.py`'s `Engine` (driven by `grammar.py`'s
-`GRAMMAR` table) to get an AST, then applies one post-parse check
-(`validate_program_structure`) that no single grammar rule can express on
-its own. The resulting AST feeds `semantics.py` next (via `ir.py`/
-`interpreter.py`, which both call `parse_source()` themselves rather than
-duplicating this orchestration).
-
-`parse_source(source)` is the actual entry point every other module calls;
-the rest of this file (`format_parse_report`, `main`) only exists to support
-running the parser standalone from the command line.
-"""
-
 import argparse
 import json
 import os
@@ -26,22 +11,7 @@ from grammar_engine import Engine
 
 
 def validate_program_structure(declarations, fn_name_tokens, errors, eof_tok):
-    """Enforce whole-program properties the grammar itself can't check
-    locally, because no single production ever sees the *last* declaration
-    in the file while it's being parsed - only after every top-level
-    declaration is collected can we ask "which one came last, and was it
-    correct?":
-
-      - at least one function must be declared at all
-      - the last function declared must be named `main`
-      - `main` must return `void` and take no parameters
-
-    A `main`-name error is reported at that function's own name token (via
-    `fn_name_tokens`, populated by grammar.py's `_top_level_function_decl_fn`)
-    rather than at `eof_tok`, so the error points somewhere a reader can
-    actually look; `eof_tok` is only used for the "no functions at all" case,
-    where there is no function token to point at.
-    """
+    # last function declared must be main, returning void with no params
     func_decls = [d for d in declarations if d.kind == "FunctionDecl"]
     if not func_decls:
         errors.append(ParseError("Program must define at least one function", eof_tok))
@@ -67,16 +37,6 @@ def validate_program_structure(declarations, fn_name_tokens, errors, eof_tok):
 
 
 def parse_source(source):
-    """Run the Scanner and Parser phases over `source` and return
-    `(ast, syntax_errors, lex_errors)`.
-
-    Lexical and syntax errors are returned as two separate lists (rather
-    than merged into one) so a caller can distinguish "the characters
-    themselves were malformed" from "the token stream didn't fit the
-    grammar" - `interpreter.py`/`ir.py` print both, but only lexical errors
-    ever prevent the scanner from producing *any* usable tokens, while
-    syntax errors can coexist with a partially-usable AST.
-    """
     scanner = Scanner(source)
     tokens, lex_errors = scanner.scan_all()
     ast, errors, fn_name_tokens = Engine().parse(GRAMMAR, tokens)
@@ -85,9 +45,6 @@ def parse_source(source):
 
 
 def format_parse_report(filename, ast, syntax_errors, lex_errors, elapsed_ms, show_ast):
-    """Render the human-readable report the CLI prints/writes: an error
-    summary, optionally every individual error, and optionally the full AST
-    as JSON (via `Node.to_dict()`)."""
     lines = [
         f"[Parser] {filename}",
         f"  Lexical errors : {len(lex_errors)}",
@@ -113,12 +70,6 @@ def format_parse_report(filename, ast, syntax_errors, lex_errors, elapsed_ms, sh
 
 
 def main():
-    """CLI entry point: `python parser.py <source_file> [-o out] [--ast]`.
-    Exits with status `2` if any lexical or syntax error was found -
-    mirrored by every other phase's CLI (`scanner.py`, `ir.py`,
-    `interpreter.py`) so a shell script can treat "exit 2" as "this file
-    doesn't compile" uniformly regardless of which phase caught the
-    problem."""
     cli = argparse.ArgumentParser(description="CSC617M Custom Language Parser")
     cli.add_argument("source_file", help="Path to source file to parse")
     cli.add_argument("-o", "--output", help="Write parse report to this file")
@@ -156,7 +107,7 @@ def main():
         print(report)
 
     if lex_errors or syntax_errors:
-        sys.exit(2)
+        sys.exit(2)  # 2 = compile error
 
 
 if __name__ == "__main__":
