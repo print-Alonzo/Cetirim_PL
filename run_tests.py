@@ -53,7 +53,10 @@ with -O. That is the real correctness contract for an optimizer - it may
 change how many quads run, never what they print - and it needs no goldens of
 its own. The one optimizer fixture with a golden is OPTIMIZER_DEMO, whose
 `optimizer.py` report is diffed so a change in what gets optimized shows up
-as a reviewable diff rather than passing silently.
+as a reviewable diff rather than passing silently. OPTIMIZER_DEEP_CHAIN is the
+other side of that coin (check_optimizer_cap_note): a program the optimizer
+cannot fully reduce inside its round cap, checked for admitting so in both the
+report and the --json payload.
 """
 
 import argparse
@@ -138,12 +141,18 @@ FEATURE_FIXTURES = [
     "struct_return",
     "param_passing",
     "optimizer_demo",
+    "optimizer_deep_chain",
 ]
 
 # The fixture whose optimizer report is itself a golden - written to exercise
 # all three techniques at once, so the report doubles as the worked example
 # the README points at.
 OPTIMIZER_DEMO = "optimizer_demo"
+
+# The fixture whose dead dependency chain is longer than the optimizer's
+# fixpoint round cap, so its run stops with work still left to find. Checked
+# for the *reporting* of that, not for a particular quad count.
+OPTIMIZER_DEEP_CHAIN = "optimizer_deep_chain"
 
 
 def run(script, src, stdin_text="", extra_args=()):
@@ -398,6 +407,47 @@ def check_optimizer_report(update):
     return ok
 
 
+def check_optimizer_cap_note():
+    """A run that stops on the fixpoint round cap has to say so.
+
+    Two assertions, in order of what they protect. First, the text report and
+    the `--json` payload must agree about convergence - a `Note` line appears
+    in the report exactly when `stats.converged` is false - so neither view
+    can present a partially reduced listing as final. Second, this fixture
+    must actually be hitting the cap, or the first assertion is checking
+    nothing: its dead chain is deliberately longer than `_MAX_ROUNDS` can
+    peel. If dead store elimination is ever taught to reach an inner fixpoint
+    in one round, this fixture will converge and this check should be
+    retired along with the note it pins - the failure is a report of that,
+    not a regression."""
+    src = f"tests/{OPTIMIZER_DEEP_CHAIN}.src"
+    report = run("optimizer.py", src)
+    view = run("optimizer.py", src, extra_args=("--json", "-"))
+
+    try:
+        payload = json.loads(view.stdout)
+    except ValueError as e:
+        print(f"[FAIL] tests/{OPTIMIZER_DEEP_CHAIN}: --json payload is not valid JSON ({e})")
+        return False
+
+    converged = payload["stats"]["converged"]
+    noted = "Note       :" in report.stdout
+
+    ok = True
+    if noted == converged:
+        state = "converged" if converged else "hit the round cap"
+        print(f"[FAIL] tests/{OPTIMIZER_DEEP_CHAIN}: the run {state} but the report "
+              f"{'has' if noted else 'is missing'} its cap note")
+        ok = False
+    if converged:
+        print(f"[FAIL] tests/{OPTIMIZER_DEEP_CHAIN}: fixture no longer exceeds the "
+              f"round cap, so it cannot pin the cap note (see this check's docstring)")
+        ok = False
+    if ok:
+        print(f"[PASS] tests/{OPTIMIZER_DEEP_CHAIN} (round cap reported)")
+    return ok
+
+
 def main():
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument("--update", action="store_true", help="Regenerate golden files from current output")
@@ -411,6 +461,7 @@ def main():
         print("Golden files updated.")
         return
 
+    results.append(check_optimizer_cap_note())
     results += [check_negative(*fixture) for fixture in NEGATIVE_FIXTURES]
 
     for name in PROGRAMS:

@@ -1610,11 +1610,12 @@ class CetirimIDE(tk.Tk):
             self.opt_log.insert("end", f"[{t['technique']}] {where}{t['detail']}")
         stats = view["stats"]
         by = stats["by_technique"]
+        capped = "" if stats.get("converged", True) else "  ·  round cap reached"
         self.optimizer_stats.config(text=(f"{stats['original_count']} → {stats['optimized_count']} quads  ·  "
                                           f"removed {stats['removed']}, rewritten {stats['rewritten']}  ·  "
                                           f"const-prop {by.get('constant-propagation', 0)}, "
                                           f"algebraic {by.get('algebraic-simplification', 0)}, "
-                                          f"DCE {by.get('dead-code-elimination', 0)}"))
+                                          f"DCE {by.get('dead-code-elimination', 0)}{capped}"))
         self.bottom_tabs.select(self.optimizer_frame)
 
     def go_to_transformation(self, _event=None):
