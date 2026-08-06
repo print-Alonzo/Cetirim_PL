@@ -1,0 +1,45 @@
+// Feature fixture: a dead dependency chain deeper than the optimizer's
+// fixpoint round cap (`optimizer._MAX_ROUNDS`), which is the one input shape
+// that makes the optimizer stop with work still left to do.
+//
+// Dead store elimination computes its live-name set once per round, so it can
+// only peel the outermost link off a chain of dead stores per pass: removing
+// `... -> a14` is what makes `a13` dead, and that is not noticed until the
+// next round. A chain this long therefore runs the loop out of rounds, and
+// the point of the fixture is that this is reported rather than hidden -
+// `optimizer.py`'s report gains a `Note` line and the `--json` payload's
+// `stats.converged` is false (see run_tests.check_optimizer_cap_note).
+//
+// The quads left behind are the ones the unoptimized program would have run
+// anyway, so the differential `-O` check on this file still passes: a capped
+// run is a less-reduced program, never a wrong one.
+//
+//     python interpreter.py tests/optimizer_deep_chain.src       prints 1
+//     python interpreter.py tests/optimizer_deep_chain.src -O    prints 1
+//     python optimizer.py   tests/optimizer_deep_chain.src       reports the cap
+
+// Every a(k) is written and then read only by a(k+1); nothing reads a14, so
+// the whole chain is dead. `n` is a parameter, so constant propagation cannot
+// fold any of it away first and leave nothing for this fixture to test.
+int deep(int n) {
+    var int a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14;
+    a1 = n + n;
+    a2 = a1 + n;
+    a3 = a2 + n;
+    a4 = a3 + n;
+    a5 = a4 + n;
+    a6 = a5 + n;
+    a7 = a6 + n;
+    a8 = a7 + n;
+    a9 = a8 + n;
+    a10 = a9 + n;
+    a11 = a10 + n;
+    a12 = a11 + n;
+    a13 = a12 + n;
+    a14 = a13 + n;
+    return n;
+}
+
+void main() {
+    print(deep(1));
+}

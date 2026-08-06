@@ -74,6 +74,14 @@ TECHNIQUES = ("constant-propagation", "algebraic-simplification", "dead-code-eli
 # rewrite a quad into a strictly simpler form, so this is a safety net
 # against a hypothetical oscillating rule, not a tuning knob - real programs
 # reach a fixpoint in two or three rounds.
+#
+# Hitting the cap is not a correctness problem: whatever the loop stopped
+# short of removing is still a quad the unoptimized program would have run.
+# It does mean the listing is not as short as it could be, though - dead
+# store elimination peels one link off a dead dependency chain per round, so
+# a chain longer than the cap keeps some of its links. `optimize()` therefore
+# reports whether it converged, and `format_report()` says so, rather than
+# letting a partially optimized listing look final. See LIMITATIONS.md.
 _MAX_ROUNDS = 10
 
 VIEW_VERSION = 1
@@ -730,6 +738,9 @@ class OptResult:
     records: list = field(default_factory=list)
     stats: dict = field(default_factory=dict)
     rounds: int = 0
+    # False when the round cap stopped the loop while it was still finding
+    # work. The quads are correct either way; see `_MAX_ROUNDS`.
+    converged: bool = True
 
 
 def _remap_entries(quads, functions):
@@ -760,6 +771,7 @@ def optimize(quads, functions, var_types, max_rounds=_MAX_ROUNDS):
     records = []
 
     rounds = 0
+    converged = False
     for _ in range(max_rounds):
         before = len(records)
         work, origins = _pass_const_prop(work, origins, functions, records)
@@ -767,6 +779,9 @@ def optimize(quads, functions, var_types, max_rounds=_MAX_ROUNDS):
         work, origins = _pass_dce(work, origins, records)
         rounds += 1
         if len(records) == before:
+            # A round that found nothing means no pass can find anything
+            # more: the passes only ever react to each other's rewrites.
+            converged = True
             break
 
     return OptResult(
@@ -775,12 +790,13 @@ def optimize(quads, functions, var_types, max_rounds=_MAX_ROUNDS):
         original_quads=original,
         origins=origins,
         records=records,
-        stats=_build_stats(original, work, origins, records),
+        stats=_build_stats(original, work, origins, records, converged),
         rounds=rounds,
+        converged=converged,
     )
 
 
-def _build_stats(original, work, origins, records):
+def _build_stats(original, work, origins, records, converged=True):
     surviving = {orig: work[i] for i, orig in enumerate(origins)}
     rewritten = sum(
         1 for orig, q in surviving.items() if str(q) != str(original[orig])
@@ -794,6 +810,7 @@ def _build_stats(original, work, origins, records):
         "removed": len(original) - len(surviving),
         "rewritten": rewritten,
         "by_technique": by_technique,
+        "converged": converged,
     }
 
 
@@ -861,7 +878,11 @@ def format_report(result, source_file):
     """Render the optimizer's work as an annotated text report: a summary
     header, the optimized quad listing (through `ir.format_quads`, so it
     reads identically to `ir.py`'s own output), the transformation log
-    grouped by technique, and the statistics table."""
+    grouped by technique, and the statistics table.
+
+    A run that stopped on the round cap gets one extra `Note` line, so a
+    listing that is correct but not fully reduced is never mistaken for the
+    optimizer's last word."""
     stats = result.stats
     lines = [
         f"[IR OPTIMIZATION] {os.path.basename(source_file)}",
@@ -869,6 +890,14 @@ def format_report(result, source_file):
         f"  Quads      : {stats['original_count']} -> {stats['optimized_count']}"
         f" ({stats['removed']} removed, {stats['rewritten']} rewritten)",
         f"  Rounds     : {result.rounds}",
+    ]
+    if not result.converged:
+        lines.append(
+            f"  Note       : stopped at the {result.rounds}-round cap with work"
+            " still being found; the quads below are correct but some dead"
+            " ones may remain"
+        )
+    lines += [
         "",
         "Optimized Intermediate Code (Quadruples):",
         format_quads(result.quads),
