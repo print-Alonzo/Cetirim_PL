@@ -1,4 +1,4 @@
-"""A standalone IDE for the CSC617M custom language. Run: python cetirim_ide.py"""
+"""A standalone IDE for Cetirim. Run: python cetirim_ide.py"""
 from __future__ import annotations
 
 import contextlib
@@ -40,20 +40,14 @@ TEMPLATES = {
     "variable": "var int ${name} = ${value};${cursor}",
 }
 
-# Every diagnostic in the pipeline prints as "[TAG] Line N, Col C: message"
-# (the position is omitted for a whole-program semantic error), so one regex
-# splits any of them into the Problems table's three columns.
+# every diagnostic prints as "[TAG] Line N, Col C: message", this regex splits it into the Problems table's three columns
 DIAGNOSTIC = re.compile(r"^\[(?P<tag>[A-Z ]+)\]\s*(?:Line (?P<line>\d+), Col (?P<col>\d+):\s*)?(?P<message>.*)$",
                         re.S)
 
-# How many rows the Trace tab keeps, so a long-running loop can't grow it
-# unbounded. Bounds the worker's pending-row buffer as well as the widget.
+# how many rows the Trace tab keeps, so a long-running loop can't grow it unbounded (bounds the worker's pending-row buffer too, not just the widget)
 TRACE_LIMIT = 500
 
-# One place for every color in the IDE. All widget construction and every
-# ttk style reads from this dict - no hex literal may appear anywhere else
-# in the file. Three surface levels and a single accent, by design: the
-# fewer distinct planes there are, the quieter the window reads.
+# one place for every color in the IDE, no hex literal appears anywhere else in the file
 THEME = {
     # surfaces
     "bg":               "#181b21",  # editor
@@ -105,8 +99,8 @@ THEME = {
 
 
 def hairline(parent, side="top", **pack_options):
-    """A 1px divider in the border color. ttk's own borders don't render
-    reliably flat under clam, so every divider in this UI is one of these."""
+    # ttk's own borders don't render reliably flat under clam, so every divider
+    # in this UI is a plain 1px Frame instead
     horizontal = side in ("top", "bottom")
     bar = tk.Frame(parent, background=THEME["border"],
                    height=1 if horizontal else 0, width=0 if horizontal else 1)
@@ -115,23 +109,8 @@ def hairline(parent, side="top", **pack_options):
 
 
 def collect_locals(node, out):
-    """Walk a `FunctionDecl` and append `(line, name)` for every name local
-    to it, in source order.
-
-    The walk is generic - it recurses through every Node/list field rather
-    than enumerating the statement kinds that can hold a block - so a
-    declaration nested inside an `if`/`for`/`while`/`try` body is found
-    without this needing to know the statement vocabulary, and a new
-    block-bearing statement in grammar.py needs no change here.
-
-    Six binding forms, each keyed off the node kind that introduces it:
-    `Param` (a parameter is as local to the function as anything it
-    declares), `VarDecl` (`var`/`val`, one entry per declarator, each with
-    its own line), `LetDecl` (`None` names are `_` discards, which bind
-    nothing), `MultiAssign` (typed multi-assign declares ordinary locals
-    too, and discards the same way), and the loop/catch variables of
-    `ForInStmt`/`CatchClause`.
-    """
+    # walks a FunctionDecl and appends (line, name) for every local, recursing through every
+    # Node/list field generically so a new block-bearing statement in grammar.py needs no change here
     if isinstance(node, list):
         for item in node:
             collect_locals(item, out)
@@ -160,17 +139,8 @@ def collect_locals(node, out):
 
 
 class PanelTabs(ttk.Frame):
-    """A flat tab strip over a content area, in place of `ttk.Notebook`.
-
-    clam has no per-tab element that can carry an underline, and its Tab
-    map repaints a bevel on selection no matter how the style is pinned -
-    drawing the strip by hand is what buys the accent-underlined tabs and
-    keeps the strip on the same surface as the panel below it.
-
-    Mirrors the slice of the Notebook API the IDE actually uses: `add`,
-    `select` (by frame, path name or index), and a `<<TabChanged>>` virtual
-    event. `badge()` adds the live problem count to a tab's label.
-    """
+    # a flat tab strip over a content area, in place of ttk.Notebook - clam has no per-tab
+    # element that can carry an underline, so this draws the strip by hand instead
 
     def __init__(self, master):
         super().__init__(master, style="Panel.TFrame")
@@ -275,13 +245,10 @@ class CetirimIDE(tk.Tk):
         self.editor.edit_modified(False)  # the queued <<Modified>> must not mark the fresh buffer dirty
         self._refresh_all()
 
-    # ------------------------------------------------------------------
     # Theme
-    # ------------------------------------------------------------------
 
     def _pick_fonts(self):
-        """Shared named Font objects, resolved per platform. Widgets hold the
-        objects (not tuples), so one configure() call resizes all of them."""
+        # shared named Font objects, not tuples, so one configure() call resizes all of them
         families = set(tkfont.families(self))
 
         def first(candidates, fallback_named):
@@ -293,11 +260,7 @@ class CetirimIDE(tk.Tk):
         mono = first(["SF Mono", "Menlo", "Cascadia Code", "Consolas", "DejaVu Sans Mono"], "TkFixedFont")
         ui = first(["SF Pro Text", "Helvetica Neue", "Segoe UI", "DejaVu Sans"], "TkDefaultFont")
         self.font_editor = tkfont.Font(family=mono, size=13)
-        # Two derived editor faces, so a token's *type* is legible from its
-        # weight and slant, not colour alone: keywords bold, comments
-        # italic. Every mono family picked above keeps one advance width
-        # across faces, so the gutter and the caret column stay aligned.
-        # `change_font_size` resizes all three together.
+        # two derived faces (bold keywords, italic comments) so token type is legible without colour alone
         self.font_editor_bold = tkfont.Font(family=mono, size=13, weight="bold")
         self.font_editor_italic = tkfont.Font(family=mono, size=13, slant="italic")
         self.font_mono = tkfont.Font(family=mono, size=12)
@@ -312,8 +275,7 @@ class CetirimIDE(tk.Tk):
         self.configure(background=T["bg_dark"])
         style = ttk.Style(self)
         style.theme_use("clam")  # the only built-in theme whose colors fully obey configure()
-        # Setting light/dark/border colors at the root style is what kills
-        # clam's 3D bevels everywhere; focuscolor=bg removes the dotted ring.
+        # setting light/dark/border colors at the root style is what kills clam's 3D bevels everywhere, focuscolor=bg removes the dotted focus ring
         style.configure(".", background=T["bg"], foreground=T["fg"], font=self.font_ui,
                         bordercolor=T["border"], lightcolor=T["bg"], darkcolor=T["bg"],
                         focuscolor=T["bg"], troughcolor=T["bg_dark"],
@@ -337,10 +299,8 @@ class CetirimIDE(tk.Tk):
         # Panel tab strip (see PanelTabs) - three states, label color only.
         for name, color in (("Tab", T["fg_dim"]), ("TabHover", T["fg"]), ("TabOn", T["fg_bright"])):
             style.configure(f"{name}.TLabel", background=T["bg_dark"], foreground=color, font=self.font_ui_sm)
-        # Buttons. Ghost is the default in chrome; only Run is filled.
-        # width=0 is load-bearing: clam ships TButton with `-width -11`, a
-        # minimum of eleven characters, which pads every label out into a
-        # sea of dead space.
+        # buttons: Ghost is the chrome default, only Run is filled. width=0 is load-bearing here,
+        # clam ships TButton with -width -11 (an eleven-character minimum) which pads every label out into a sea of dead space otherwise
         flat = dict(borderwidth=0, relief="flat", width=0)
         style.configure("TButton", background=T["bg_raise"], foreground=T["fg"], padding=(12, 6), **flat)
         style.map("TButton", background=[("active", T["bg_hover"]), ("pressed", T["bg_active"])],
@@ -369,8 +329,7 @@ class CetirimIDE(tk.Tk):
         style.map("TEntry", bordercolor=[("focus", T["accent"])], lightcolor=[("focus", T["accent"])],
                   darkcolor=[("focus", T["accent"])], fieldbackground=[("disabled", T["bg_dark"])],
                   foreground=[("disabled", T["fg_faint"])])
-        # Trees. bordercolor has to be pinned to the surface too, or clam
-        # draws a 1px box around every panel from the root style's border.
+        # trees: bordercolor has to be pinned to the surface too, or clam draws a 1px box around every panel from the root style's border
         style.configure("Treeview", background=T["bg_dark"], fieldbackground=T["bg_dark"], foreground=T["fg"],
                         borderwidth=0, bordercolor=T["bg_dark"], lightcolor=T["bg_dark"],
                         darkcolor=T["bg_dark"], rowheight=23, font=self.font_ui_sm)
@@ -383,26 +342,20 @@ class CetirimIDE(tk.Tk):
         style.configure("TPanedwindow", background=T["border"])
         style.configure("Sash", sashthickness=5, gripcount=0)
         style.configure("TSeparator", background=T["border"])
-        # Arrow-less flat scrollbars (thickness tracks arrowsize in clam), in
-        # two trough colors so they disappear into whichever surface hosts
-        # them. "Editor.Flat.X" inherits the arrow-less layout from "Flat.X"
-        # through ttk's leading-component fallback - only the colors differ.
+        # arrow-less flat scrollbars, two trough colors so they disappear into whichever surface hosts them
         for orient, sticky in (("Vertical", "ns"), ("Horizontal", "ew")):
             style.layout(f"Flat.{orient}.TScrollbar",
                          [(f"{orient}.Scrollbar.trough", {"sticky": sticky, "children":
                              [(f"{orient}.Scrollbar.thumb", {"expand": 1, "sticky": "nswe"})]})])
             for prefix, trough in (("Flat", T["bg_dark"]), ("Editor.Flat", T["bg"])):
-                # The thumb rests barely above its trough so a panel whose
-                # content already fits doesn't grow a bright bar down its side.
+                # thumb rests barely above its trough so a panel whose content already fits doesn't grow a bright bar down its side
                 style.configure(f"{prefix}.{orient}.TScrollbar", troughcolor=trough, background=T["border"],
                                 bordercolor=trough, lightcolor=T["border"], darkcolor=T["border"],
                                 gripcount=0, arrowsize=9, relief="flat")
                 style.map(f"{prefix}.{orient}.TScrollbar", background=[("active", T["bg_active"])],
                           lightcolor=[("active", T["bg_active"])], darkcolor=[("active", T["bg_active"])])
 
-    # ------------------------------------------------------------------
     # UI construction
-    # ------------------------------------------------------------------
 
     def _build_ui(self):
         self._make_menu()
@@ -415,9 +368,7 @@ class CetirimIDE(tk.Tk):
         self._bind_shortcuts()
 
     def _build_header(self):
-        """One slim bar: analysis actions on the left, execution on the
-        right. File actions live in the File menu only - a toolbar button
-        for Save earns nothing next to a Cmd-S every editor user knows."""
+        # analysis actions on the left, execution on the right - file actions live in the File menu only, a toolbar Save button earns nothing next to Cmd-S
         header = ttk.Frame(self, style="Panel.TFrame", padding=(14, 6))
         header.pack(fill="x")
         left = ttk.Frame(header, style="Panel.TFrame")
@@ -428,10 +379,7 @@ class CetirimIDE(tk.Tk):
         self._header_divider(left)
         for text, callback in (("Check", self.check_code), ("Optimize", self.show_optimization)):
             ttk.Button(left, text=text, command=callback, style="Ghost.TButton").pack(side="left")
-        # Transport stays visible but disabled while nothing is running, so
-        # the debugger's controls are discoverable before a session starts.
-        # "In"/"Over" are named rather than just "Step" so the two trace
-        # modes read as the pair they are.
+        # transport stays visible but disabled while nothing is running, so it's discoverable early
         self.step_btn = ttk.Button(right, text="Step In", command=self.debug_step,
                                    state="disabled", style="Ghost.TButton")
         self.step_btn.pack(side="left")
@@ -481,9 +429,7 @@ class CetirimIDE(tk.Tk):
         self._panel = ttk.Frame(self.vsplit, style="Panel.TFrame")
         self.vsplit.add(self.hsplit, weight=4)
         self.vsplit.add(self._panel, weight=1)
-        # Initial sash placement must wait until the panes are actually
-        # mapped - the smoke harness runs the whole IDE withdraw()n, where
-        # sashpos() is unreliable, and <Map> never fires there.
+        # sash placement waits for <Map> since sashpos() is unreliable before the panes are mapped
         self.vsplit.bind("<Map>", self._init_sashes)
 
     def _init_sashes(self, _event=None):
@@ -528,9 +474,7 @@ class CetirimIDE(tk.Tk):
         T = THEME
         area = self._editor_area
         tabbar = ttk.Frame(area, style="Panel.TFrame")
-        # The divider is packed first so it spans the whole strip; a
-        # side="left" label packed before it would claim the full height and
-        # push the line out from under itself.
+        # divider packed first so it spans the whole strip, a label packed before it would claim the full height instead
         hairline(tabbar, side="bottom")
         self.editor_tab = ttk.Label(tabbar, style="EditorTab.TLabel")
         self.editor_tab.pack(side="left")
@@ -610,7 +554,7 @@ class CetirimIDE(tk.Tk):
         self._build_optimizer_tab(frames["optimizer"])
         self.bottom_tabs.bind("<<TabChanged>>", self._on_tab_changed)
 
-    # -- small builders shared by the panel tabs ------------------------
+    # small builders shared by the panel tabs
 
     def _panel_list(self, parent, **kwargs):
         T = THEME
@@ -621,8 +565,8 @@ class CetirimIDE(tk.Tk):
         return tk.Listbox(parent, **options)
 
     def _scrolled(self, widget, hbar=False):
-        """Attach flat themed scrollbars to `widget` inside its parent.
-        Call before packing the widget itself (pack order matters)."""
+        # attach flat themed scrollbars to widget, call before packing widget itself
+        # since pack order matters here
         parent = widget.master
         if hbar:
             horizontal = ttk.Scrollbar(parent, orient="horizontal", style="Flat.Horizontal.TScrollbar",
@@ -643,10 +587,7 @@ class CetirimIDE(tk.Tk):
         return box
 
     def _scrolled_tree(self, parent, columns=(), widths=(), **kwargs):
-        """A headless (no heading row) tree + flat scrollbar, the shape every
-        debugger panel uses: column #0 is the name, the rest are values.
-        Only the last column stretches - letting an intermediate one absorb
-        the slack pushes the final column far off to the right."""
+        # headless tree + flat scrollbar, column #0 is the name, the rest are values, only the last column stretches
         wrap = ttk.Frame(parent, style="Panel.TFrame")
         wrap.pack(fill="both", expand=True)
         tree = ttk.Treeview(wrap, columns=columns, show="tree", style="Panel.Treeview", **kwargs)
@@ -661,8 +602,8 @@ class CetirimIDE(tk.Tk):
 
     @staticmethod
     def _column(parent, title, weight=True, divider=True):
-        """One titled column of the Debug/Optimizer tabs, with the hairline
-        that separates it from the previous one."""
+        # one titled column of the Debug/Optimizer tabs, with the hairline that
+        # separates it from the previous one
         if divider:
             hairline(parent, side="left", pady=8)
         column = ttk.Frame(parent, style="Panel.TFrame", padding=(10, 8, 10, 10))
@@ -670,7 +611,7 @@ class CetirimIDE(tk.Tk):
         ttk.Label(column, text=title, style="Section.TLabel").pack(anchor="w", pady=(0, 6))
         return column
 
-    # -- panel tabs -----------------------------------------------------
+    # panel tabs
 
     def _build_output_tab(self, frame):
         T = THEME
@@ -776,8 +717,7 @@ class CetirimIDE(tk.Tk):
         optimizer_panes = ttk.Frame(frame, style="Panel.TFrame")
         optimizer_panes.pack(fill="both", expand=True)
         before_col = self._column(optimizer_panes, "Original IR", divider=False)
-        # width=1: tk.Text asks for 80 columns by default, and two of those
-        # eat the whole panel before the third column gets any space at all.
+        # width=1: tk.Text asks for 80 columns by default, two of those eat the whole panel before the third column gets any space at all
         self.opt_before = tk.Text(before_col, width=1, height=8, state="disabled", wrap="none",
                                   background=T["bg_dark"], foreground=T["ir_before_fg"],
                                   font=self.font_mono_sm, borderwidth=0, highlightthickness=0)
@@ -866,10 +806,7 @@ class CetirimIDE(tk.Tk):
         for sequence, callback in bindings.items():
             self.bind_all(sequence, self._shortcut(callback))
         if not self.is_aqua:
-            # The Text class has emacs-style bindings for several Control
-            # keys (Control-o = open line, Control-n = next line, ...) that
-            # would run before a bind_all handler; a widget-level bind
-            # returning "break" preempts them.
+            # Text has emacs-style Control bindings that run before bind_all, a widget-level "break" preempts them
             for sequence in (f"<{mod}-n>", f"<{mod}-o>", f"<{mod}-f>", f"<{mod}-b>", f"<{mod}-j>"):
                 self.editor.bind(sequence, self._shortcut(bindings[sequence]))
 
@@ -886,8 +823,7 @@ class CetirimIDE(tk.Tk):
                             ("number", T["syn_number"]), ("comment", T["syn_comment"]),
                             ("function", T["syn_function"]), ("error", T["syn_error"])):
             self.editor.tag_configure(name, foreground=color)
-        # Weight and slant carry the same distinction the colours do, so the
-        # token classes stay apart for a reader who can't separate the hues.
+        # weight and slant carry the same distinction the colours do, so token classes still read apart for someone who can't separate the hues
         self.editor.tag_configure("keyword", font=self.font_editor_bold)
         self.editor.tag_configure("comment", font=self.font_editor_italic)
         self.editor.tag_configure("error", underline=True)
@@ -895,16 +831,14 @@ class CetirimIDE(tk.Tk):
         self.editor.tag_configure("current_line", background=T["current_line"])
         self.editor.tag_configure("find_match", background=T["find_match"])
         self.editor.tag_configure("find_current", background=T["find_current"], foreground=T["fg_bright"])
-        # The caret line sits under every other background tag; the paused
-        # line, the find highlights and the selection all have to win over it.
+        # the caret line sits under every other background tag, the paused line, find highlights and selection all have to win over it
         self.editor.tag_lower("cursor_line")
         for name in ("current_line", "find_match", "find_current", "sel"):
             self.editor.tag_raise(name)
 
     def change_font_size(self, delta):
         size = max(9, min(24, int(self.font_editor.cget("size")) + delta))
-        # All three editor faces move together - the bold/italic tags would
-        # otherwise keep their old size and break the column alignment.
+        # all three editor faces move together, otherwise the bold/italic tags keep their old size and break column alignment
         for font in (self.font_editor, self.font_editor_bold, self.font_editor_italic):
             font.configure(size=size)
         self.refresh_line_numbers()
@@ -962,9 +896,7 @@ class CetirimIDE(tk.Tk):
         self._refresh_diagnostics_status()
 
     def _refresh_diagnostics_status(self):
-        """The status bar's left segment. Counts are only meaningful for the
-        buffer they were produced from, so an edit demotes them to a hint
-        rather than leaving a stale ✓ on screen."""
+        # counts are only meaningful for the buffer they were produced from, an edit demotes them to a hint instead of leaving a stale checkmark on screen
         if self._checked_src != self.source():
             self.status.config(text="Not checked", foreground=THEME["fg_faint"])
             return
@@ -983,18 +915,8 @@ class CetirimIDE(tk.Tk):
     TYPE_KEYWORDS = {"int", "float", "char", "string", "bool", "void"}
 
     def highlight(self):
-        """Re-colour the buffer from a scan of it.
-
-        Everything here comes from the scanner - no regex over the text.
-        That is what keeps the classes from contradicting each other: a
-        regex for comments cannot tell `"http://x"` (a string) from a real
-        `//`, and a regex for call names matches `has (` inside a comment
-        and `print (` (a keyword) just as readily as a genuine call. Since
-        the scanner already decides all three questions to parse the file at
-        all, asking it is both cheaper and correct by construction, and the
-        tags no longer overlap - so which one wins no longer depends on the
-        order they were created in.
-        """
+        # re-colours the buffer entirely from a scan of it, no regex - a regex for comments can't
+        # tell "http://x" (a string) from a real //, the scanner already answers that correctly
         src = self.source()
         for tag in ("keyword", "type", "string", "number", "comment", "function", "error"):
             self.editor.tag_remove(tag, "1.0", "end")
@@ -1005,8 +927,7 @@ class CetirimIDE(tk.Tk):
         for i, tok in enumerate(tokens):
             if tok.ttype == TT.EOF:
                 continue
-            # A quoted form's lexeme is escape-resolved, so its length is not
-            # its width on screen; the scanner stamps a real end for those.
+            # a quoted form's lexeme is escape-resolved, so its length isn't its width on screen, the scanner stamps a real end for those
             if tok.end_line is not None:
                 end = f"{tok.end_line}.{tok.end_col - 1}"
             else:
@@ -1014,8 +935,7 @@ class CetirimIDE(tk.Tk):
             start = f"{tok.line}.{tok.col - 1}"
 
             if tok.ttype == TT.ERROR:
-                # A literal still being typed: mark the whole run, rather
-                # than leaving it plain until it is closed.
+                # a literal still being typed, mark the whole run instead of leaving it plain
                 self.editor.tag_add("error", start, end)
                 continue
 
@@ -1027,10 +947,7 @@ class CetirimIDE(tk.Tk):
                 tag = "number"
             elif tok.ttype == TT.IDENTIFIER and i + 1 < len(tokens) \
                     and tokens[i + 1].ttype == TT.LPAREN:
-                # Adjacency, not proximity in the text: this tolerates a
-                # newline before the `(` and can never fire on a keyword or
-                # on words inside a comment or string, none of which reach
-                # here as an IDENTIFIER token.
+                # adjacency, not proximity in the text - tolerates a newline before the `(`
                 tag = "function"
             else:
                 tag = None
@@ -1064,23 +981,13 @@ class CetirimIDE(tk.Tk):
         self.breakpoints.symmetric_difference_update({line})
         self.refresh_line_numbers()
 
-    # Diamonds are types (filled defines one, hollow only aliases one),
-    # squares are storage, and ƒ is a function. Nothing here is a round dot:
-    # a list of bullets reads as prose, not as a symbol tree.
+    # diamonds are types (filled = defines, hollow = aliases), squares are storage, ƒ is a function
     OUTLINE_GLYPHS = {"function": "ƒ", "struct": "◆", "typedef": "◇",
                       "const": "▣", "field": "▪", "variable": "▫"}
 
     def refresh_outline(self):
-        """Rebuild the sidebar tree from a real parse of the buffer.
-
-        This runs off `parse_source`, not a regex over the text: the shape it
-        has to report - which `struct` keyword opens a declaration and which
-        one merely types a field, where an inline `typedef struct C {...} R;`
-        ends - is exactly what a parser decides and a regex can only guess
-        at. The parser's `many_rec` recovery hands back a *partial* AST when
-        the buffer is mid-edit, which is what makes this usable on every
-        keystroke rather than only on a clean file.
-        """
+        # rebuilds the sidebar tree from a real parse_source() call, not a regex - many_rec's
+        # partial-ast recovery is what makes this work on every keystroke, not just clean files
         src = self.source()
         if src == self._outline_src and self.file_path == self._outline_path:
             return                              # nothing changed - keep the tree (and its scroll)
@@ -1089,14 +996,8 @@ class CetirimIDE(tk.Tk):
             declarations = ast.fields["declarations"]
         except Exception:
             return                              # unparseable mid-edit: leave the last good tree up
-        # Half-written code makes recovery *drop* the declaration being typed,
-        # so rebuilding on every keystroke would make whole functions blink out
-        # of the tree and back. While the buffer has errors, a shrinking
-        # outline is assumed to be that, and the last complete one stays up; it
-        # still grows immediately, and any clean parse always rebuilds (so
-        # deleting a function really does remove it). Loading a different file
-        # is not an edit, though - its outline always replaces the old one,
-        # however few declarations survive.
+        # half-written code makes recovery drop the declaration being typed, so while the buffer has
+        # errors a shrinking outline is assumed to be that and the last complete one stays up instead
         same_file = self._outline_path == self.file_path
         if (same_file and (syntax_errors or lex_errors)
                 and len(declarations) < self._outline_count):
@@ -1105,10 +1006,7 @@ class CetirimIDE(tk.Tk):
         self._outline_path = self.file_path
         self._outline_count = len(declarations)
 
-        # Rebuilding drops both the scroll offset and every expand/collapse
-        # the user set, so they are captured and replayed. Item ids are keyed
-        # by name rather than by line so that typing *above* a struct doesn't
-        # silently re-expand it.
+        # scroll offset and expand/collapse state are captured and replayed, item ids are keyed by name (not line) so typing above a struct doesn't silently re-expand it
         open_state = {iid: bool(self.outline.item(iid, "open")) for iid in self._outline_ids()}
         top = self.outline.yview()[0]
         self.outline.delete(*self.outline.get_children())
@@ -1124,17 +1022,14 @@ class CetirimIDE(tk.Tk):
             elif decl.kind == "TypedefDecl":
                 aliased = decl.fields["aliased_type"]
                 if aliased is not None and aliased.kind == "StructDef":
-                    # `typedef struct Color {...} RGB;` both defines a struct
-                    # and aliases it, so it earns a row of each.
+                    # `typedef struct Color {...} RGB;` both defines and aliases, so it earns a row of each
                     self._outline_struct(open_state, aliased.fields["name"],
                                          aliased.fields["fields"], aliased.line or decl.line)
                 self._outline_row(open_state, "", "typedef", decl.fields["name"], decl.line)
             elif decl.kind == "FunctionDecl":
                 parent = self._outline_row(open_state, "", "function",
                                            decl.fields["name"], decl.line)
-                # The whole declaration, not just the body: parameters are
-                # local to the function too, and sort ahead of its own
-                # declarations by virtue of being on the signature's line.
+                # the whole declaration, not just the body - parameters are local too, and sort ahead of the function's own locals just by being on the signature's line
                 locals_found = []
                 collect_locals(decl, locals_found)
                 for line, name in sorted(locals_found, key=lambda item: item[0] or 0):
@@ -1153,17 +1048,8 @@ class CetirimIDE(tk.Tk):
             self._outline_row(open_state, parent, "field", f.fields["name"], f.line or line)
 
     def _outline_row(self, open_state, parent, kind, name, line):
-        """Insert one row under `parent`, restoring its previous open state.
-
-        Rows are labelled with the bare name - a declaration's *type* is the
-        Symbols tab's job (it renders resolved types via `semantics.type_name`,
-        which needs a `SymbolTable` this doesn't have), and spelling it here
-        only competes with the name for a narrow sidebar's width.
-
-        The item id is keyed by that name rather than by position, so it
-        survives edits elsewhere in the file; a `#n` suffix disambiguates the
-        genuine duplicates (a local shadowed in a nested block, two same-named
-        declarations in a broken buffer)."""
+        # labelled with the bare name only (types are the Symbols tab's job), item id keyed
+        # by name so it survives edits, a #n suffix disambiguates genuine duplicates
         iid = f"{parent}/{kind}:{name}"
         self._outline_seen[iid] = self._outline_seen.get(iid, 0) + 1
         if self._outline_seen[iid] > 1:
@@ -1180,9 +1066,7 @@ class CetirimIDE(tk.Tk):
             self.editor.see("insert")
             self.editor.focus_set()
 
-    # ------------------------------------------------------------------
     # Find / replace
-    # ------------------------------------------------------------------
 
     def show_find_bar(self, _event=None):
         try:
@@ -1285,16 +1169,10 @@ class CetirimIDE(tk.Tk):
         self._find_refresh(force=True)
         self.find_count.config(text=f"Replaced {count}")
 
-    # ------------------------------------------------------------------
     # Templates / dialogs
-    # ------------------------------------------------------------------
 
     def _dialog(self, title, size=None):
-        """A modal, themed Toplevel: flat surface, a body the caller fills,
-        centered over the main window. `size` is "WxH"; omit it to let Tk
-        fit the window to its contents. The title shows in the window's own
-        title bar only - repeating it as a heading inside a 400px dialog
-        just says the same thing twice."""
+        # modal themed Toplevel centered over the main window, size is "WxH" or omit to auto-fit
         T = THEME
         win = tk.Toplevel(self)
         win.title(title)
@@ -1360,7 +1238,7 @@ class CetirimIDE(tk.Tk):
         box.focus_set()
 
     def themed_prompt(self, title, message, initial=""):
-        """A small themed replacement for Tk's platform-coloured askstring."""
+        # small themed replacement for Tk's platform-coloured askstring
         T = THEME
         result = {"value": None}
         win, body = self._dialog(title)
@@ -1414,14 +1292,11 @@ class CetirimIDE(tk.Tk):
         self.write_console(f"Refactoring complete: renamed {count} occurrence(s) of '{old}' to '{new}'.\n", meta=True)
         self._refresh_all()
 
-    # ------------------------------------------------------------------
     # Check / problems / symbol table
-    # ------------------------------------------------------------------
 
     def _analyze_buffer(self):
-        """Front end over the current buffer: scan+parse, then (only when
-        clean) semantic analysis. Returns (symtab, diagnostics) where
-        symtab is None whenever the program is not runnable."""
+        # scan+parse, then (only when clean) semantic analysis. returns
+        # (symtab, diagnostics), symtab is None whenever the program isn't runnable
         ast, syntax_errors, lex_errors = parse_source(self.source())
         diagnostics = [str(e) for e in lex_errors] + [str(e) for e in syntax_errors]
         if diagnostics:
@@ -1434,8 +1309,8 @@ class CetirimIDE(tk.Tk):
         return symtab, diagnostics
 
     def _add_problem(self, text):
-        """One row of the Problems table: severity glyph and phase in the
-        name column, position in the second, message in the third."""
+        # one row of the Problems table: severity glyph + phase in the name column,
+        # position in the second, message in the third
         if text.startswith("✓"):
             self.problems.insert("", "end", text="✓", values=("", text.lstrip("✓ ")), tags=("ok",))
             return
@@ -1489,8 +1364,8 @@ class CetirimIDE(tk.Tk):
             self._refresh_symbols_from_source()
 
     def _refresh_symbols_from_source(self):
-        """Quiet variant of check_code for the Symbols tab: analyzes the
-        buffer without touching the Problems list or the console."""
+        # quiet variant of check_code for the Symbols tab: analyzes the buffer
+        # without touching the Problems list or the console
         self._last_symtab, _ = self._analyze_buffer()
         self.refresh_symbols()
 
@@ -1501,9 +1376,8 @@ class CetirimIDE(tk.Tk):
 
     @staticmethod
     def _function_locals(symtab, func_name, exclude):
-        """Every local Symbol of `func_name`, in first-resolution order,
-        pulled from the analyzer's node_symbol side table (keyed by node,
-        so the same Symbol appears once per use - dedupe by ir_name)."""
+        # every local Symbol of func_name, pulled from node_symbol (keyed by node, so
+        # the same Symbol can appear more than once, dedupe by ir_name)
         prefix = func_name + "."
         seen = {}
         for entry in symtab.node_symbol.values():
@@ -1575,16 +1449,10 @@ class CetirimIDE(tk.Tk):
                 self.editor.see("insert")
                 self.editor.focus_set()
 
-    # ------------------------------------------------------------------
     # Optimizer view
-    # ------------------------------------------------------------------
 
     def show_optimization(self):
-        """Run the IR optimizer on the current source and fill the Optimizer
-        tab with `build_view()`'s payload: the original listing color-coded
-        by each quad's fate, the optimized listing, and the transformation
-        log. View-only - Run/Debug always execute the unoptimized IR, so
-        breakpoints keep lining up with source lines."""
+        # fills the Optimizer tab with build_view()'s payload - view-only, Run/Debug always execute the unoptimized IR so breakpoints keep lining up with source lines
         if not self.check_code():
             return
         from ir import generate
@@ -1625,9 +1493,7 @@ class CetirimIDE(tk.Tk):
             self.editor.see("insert")
             self.editor.focus_set()
 
-    # ------------------------------------------------------------------
     # Run / debug
-    # ------------------------------------------------------------------
 
     def run_program(self, debug=False):
         if not self.check_code():
@@ -1640,9 +1506,7 @@ class CetirimIDE(tk.Tk):
         if any(error.severity == "ERROR" for error in semantic_errors):
             self.write_console("Semantic errors:\n" + "\n".join(str(error) for error in semantic_errors) + "\n")
             return
-        # Retire any still-live previous run first: bump the serial (its
-        # callbacks all check it and go inert), tell its executor to stop,
-        # and unblock it if it's sitting in an input() wait.
+        # retires any still-live previous run: bump the serial (its callbacks check it and go inert), stop its executor, unblock it if waiting on input()
         self.run_serial += 1
         serial = self.run_serial
         if self.executor is not None:
@@ -1672,22 +1536,15 @@ class CetirimIDE(tk.Tk):
             request["event"].wait()
             if not live():
                 raise DebugStopped()
-            # readline()'s contract: a line always ends in "\n", so an empty
-            # submit re-prompts (splits to no tokens) instead of reading as EOF.
+            # readline()'s contract is that a line always ends in "\n", so an empty submit re-prompts (splits to no tokens) instead of reading as EOF
             return request["value"] + "\n"
 
         def on_pause(line):
             if live():
                 self.after(0, self.on_debug_pause, line)
 
-        # The trace feed is batched rather than posted per line. `on_line`
-        # fires at every statement boundary, so a Continue across a loop-heavy
-        # region would otherwise queue thousands of `after` callbacks - each
-        # doing its own insert and see("end") - and the UI would stay busy
-        # working through them long after the program itself had ended.
-        # Instead the worker buffers the rows and schedules a *single* drain;
-        # rows arriving while that drain is in flight schedule the next one,
-        # so at most one trace callback is ever pending.
+        # trace feed is batched, not posted per line, or a Continue across a loop-heavy region
+        # would queue thousands of `after` callbacks - the worker buffers rows and schedules one drain at a time instead
         pending_trace = deque(maxlen=TRACE_LIMIT)  # bounded like the widget itself
         trace_scheduled = [False]
 
@@ -1696,8 +1553,7 @@ class CetirimIDE(tk.Tk):
             if not live():
                 pending_trace.clear()
                 return
-            # Only this thread pops, and the worker's appends never shorten
-            # the buffer, so the loop can't race into an empty deque.
+            # only this thread pops, and the worker's appends never shorten the buffer, so this can't race into an empty deque
             while pending_trace:
                 self.trace_list.insert("end", pending_trace.popleft())
             self.trace_list.see("end")
@@ -1708,9 +1564,7 @@ class CetirimIDE(tk.Tk):
         def on_line(line):
             if not live():
                 return
-            # Resolved here, on the executor thread, where `call_names` still
-            # describes *this* boundary - the drain runs later, by which time
-            # a freely-running program has moved on to another frame.
+            # resolved here on the executor thread, where call_names still describes this boundary
             executor = self.executor
             function = executor.call_names[-1] if executor and executor.call_names else "(top level)"
             pending_trace.append(f"{function}  —  line {line}")
@@ -1761,9 +1615,7 @@ class CetirimIDE(tk.Tk):
         self.set_run_status(f"Paused at line {line}", THEME["warn"])
 
     def _set_transport(self, state):
-        """Enable/disable the resume controls together - they are only ever
-        meaningful while the executor is parked in `_check_pause`, and any
-        of them leaving that state retires all three."""
+        # the resume controls only mean anything while the executor is parked in _check_pause, so any one of them leaving that state retires all three
         for button in (self.step_btn, self.step_over_btn, self.continue_btn):
             button.config(state=state)
 
@@ -1832,18 +1684,12 @@ class CetirimIDE(tk.Tk):
         self.editor.tag_remove("current_line", "1.0", "end")
 
     def _paused_executor(self):
-        """The executor to hand a resume control to, or None when there is
-        nothing to resume. Holding an executor is not enough: the keyboard
-        shortcuts and the Tools menu reach these handlers even while the
-        transport buttons are greyed, and a run that is merely *in flight*
-        (or one already retired by a newer run, which `self.executor` still
-        points at until the worker swaps it) must ignore them rather than
-        repaint the UI as paused."""
+        # holding an executor isn't enough - shortcuts reach these handlers even while transport
+        # buttons are greyed, so a run that's merely in flight (or already retired) must be ignored
         executor = self.executor
         return executor if executor is not None and executor.paused else None
 
     def debug_step(self):
-        """Trace one line, entering any function it calls."""
         executor = self._paused_executor()
         if executor is None:
             return
@@ -1851,8 +1697,6 @@ class CetirimIDE(tk.Tk):
         executor.dbg_step()
 
     def debug_step_over(self):
-        """Trace one line, running any function it calls to completion
-        rather than stopping inside it."""
         executor = self._paused_executor()
         if executor is None:
             return
@@ -1860,7 +1704,6 @@ class CetirimIDE(tk.Tk):
         executor.dbg_step_over()
 
     def debug_continue(self):
-        """Resume until the next breakpoint, or until the program ends."""
         executor = self._paused_executor()
         if executor is None:
             return
@@ -1875,9 +1718,7 @@ class CetirimIDE(tk.Tk):
             self._abort_pending_input()
 
     def _abort_pending_input(self):
-        """Wake a worker blocked in `request_input` by resolving its pending
-        request with an empty line (it then notices the stop request or the
-        stale serial and unwinds via DebugStopped), and idle the terminal."""
+        # wakes a worker blocked in request_input with an empty line, it then notices the stop request/stale serial and unwinds via DebugStopped
         request, self.pending_input = self.pending_input, None
         if request is not None:
             request["value"] = ""
@@ -1924,9 +1765,7 @@ class CetirimIDE(tk.Tk):
         self.console.see("end")
         self.console.config(state="disabled")
 
-    # ------------------------------------------------------------------
     # File handling
-    # ------------------------------------------------------------------
 
     def new_file(self):
         if self.dirty and not messagebox.askyesno("New file", "Discard unsaved changes?", parent=self):

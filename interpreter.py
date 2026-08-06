@@ -1,34 +1,5 @@
-"""Stack-machine VM that executes the quadruples produced by ir.py.
-
-Phase handoff: this is the last phase in the pipeline. It receives
-`(quads, functions, var_types, structs)` from `ir.py`'s `generate()` and
-just runs them - there is no further lowering after this. `main()` below
-wires the whole pipeline together for the `python interpreter.py <file>`
-CLI: scan -> parse -> analyze -> generate -> execute.
-
-Frame model: every active call gets its own dict keyed by ir_name (the
-globally-unique names semantics.py assigned - "main.i", "main.i$2" on
-shadowing, temps as "_t7"), plus a single shared `self.globals` dict for
-top-level `const`s. Because every name is unique across the whole program by
-construction, a plain "is this name currently a key in globals?" check
-(`resolve`/`set_var` below) is enough to route reads/writes to the right
-dict - no name can ever mean two different things depending on which frame
-is active, which is what let the old flat-frame VM confuse a local with a
-same-named global.
-
-Exceptions: `TRY_PUSH` records `(handler_pc, frame, call_stack_depth)`.
-`THROW`/`RETHROW` unwind `call_stack` back to that depth and resume in the
-recorded frame. There's no separate runtime notion of "finally" - ir.py's
-gen_try already compiled two copies of the finally body (one inline after a
-normal catch, one before RETHROW), so the VM only ever needs to know
-"where's the nearest still-registered handler".
-
-Arrays are plain Python lists and structs are dict-like StructValues, both
-stored directly as the value in a frame slot - passing one to a function or
-assigning it just copies the Python reference, which is exactly call-by-
-reference for aggregates and call-by-value for scalars, matching the
-project's design assumptions, for free.
-"""
+# stack-machine VM for ir.py's quadruples, the last phase in the pipeline
+# each call gets its own frame dict keyed by ir_name, plus one shared globals dict
 
 import argparse
 import operator
@@ -43,11 +14,6 @@ DEFAULTS = {"int": 0, "float": 0.0, "bool": False, "string": "", "char": "\0"}
 
 
 class RuntimeVMError(Exception):
-    """A malformed-at-runtime condition (division by zero, an
-    out-of-bounds array index, a bad `input()` parse, ...) that gets
-    reported as a clean `[RUNTIME ERROR]` line instead of a raw Python
-    traceback. Carries the source `line` it happened on, when known."""
-
     def __init__(self, message, line=None):
         super().__init__(message)
         self.message = message
@@ -58,11 +24,6 @@ class RuntimeVMError(Exception):
 
 
 class UncaughtException(Exception):
-    """A `throw`n value that reached `_unwind` with no `TRY_PUSH`-registered
-    handler left to catch it - i.e. it propagated all the way out of
-    `main`. Reported the same way as `RuntimeVMError`, just with a
-    different message shape."""
-
     def __init__(self, value, line=None):
         super().__init__(str(value))
         self.value = value
@@ -70,16 +31,10 @@ class UncaughtException(Exception):
 
 
 class DebugStopped(Exception):
-    """Raised internally to unwind `run()` when the debugger's Stop control
-    is used. Caught in `run()` and treated as a plain (non-error) return -
-    the program simply didn't finish, rather than having crashed."""
+    pass  # raised internally to unwind run() when the debugger's Stop control is used
 
 
 class StructValue(dict):
-    """A struct instance: a plain dict of field values, plus the struct's
-    type name (kept off to the side so `Name{field: value}` formatting
-    doesn't need runtime type inference)."""
-
     __slots__ = ("type_name",)
 
     def __init__(self, type_name, fields):
@@ -87,9 +42,8 @@ class StructValue(dict):
         self.type_name = type_name
 
 
-# DIV/MOD's C-style truncated semantics live in ir.py so `optimizer.py`'s
-# constant folder can fold a DIV/MOD quad through the exact same code this
-# VM executes it with - see ir._div's docstring.
+# DIV/MOD's truncated semantics live in ir.py so optimizer.py's constant folder
+# can fold them through the same code this VM executes them with, see ir._div
 BINARY_OPS = {
     "ADD": operator.add, "SUB": operator.sub, "MUL": operator.mul, "DIV": _div, "MOD": _mod,
     "EQ": operator.eq, "NE": operator.ne, "LT": operator.lt, "GT": operator.gt,
@@ -97,17 +51,12 @@ BINARY_OPS = {
 }
 UNARY_OPS = {"UMINUS": operator.neg, "UPLUS": lambda v: v, "NOT": operator.not_}
 
-# Python exceptions a malformed-at-runtime program can trigger (bad array
-# index, div by zero, missing dict key, bad literal coercion, ...). Caught
-# once at the top of run() and reported as a clean [RUNTIME ERROR], never as
-# a raw traceback.
+# native python exceptions a malformed program can trigger, caught once in run()
+# and reported as a clean [RUNTIME ERROR] instead of a raw traceback
 _NATIVE_RUNTIME_ERRORS = (ZeroDivisionError, IndexError, KeyError, ValueError, TypeError)
 
 
 class IRExecutor:
-    """Executes one `(quads, functions, var_types, structs)` program to
-    completion (or until a runtime error/uncaught exception aborts it)."""
-
     def __init__(self, quads, functions, var_types, structs, trace=False, max_steps=10_000_000,
                  max_depth=10_000, input_provider=None, breakpoints=None, on_pause=None, on_line=None):
         self.quads = quads
@@ -115,58 +64,30 @@ class IRExecutor:
         self.var_types = var_types
         self.structs = structs
         self.trace = trace
-        # 0 means unlimited for both - see main()'s --max-steps/--max-depth.
-        self.max_steps = max_steps
-        self.max_depth = max_depth
-        # IDEs can supply input without changing the command-line behavior.
-        # The callback receives every target in one `input(...)` statement
-        # and returns one whitespace-separated input line.
-        self.input_provider = input_provider
+        self.max_steps = max_steps  # 0 = unlimited
+        self.max_depth = max_depth  # 0 = unlimited
+        self.input_provider = input_provider  # lets an IDE supply input instead of stdin
         self.breakpoints = breakpoints if breakpoints is not None else set()
         self.on_pause = on_pause
         self.on_line = on_line
         self._stepping = False
-        # Step-over state: the call depth and source line the step was issued
-        # at. Both stay None for a plain step-into, which is what tells
-        # `_should_step_pause` the two modes apart.
+        # step-over state: call depth + line the step was issued at, both None means step-into
         self._step_depth = None
         self._step_line = None
-        # The call depth and source line the last pause resumed from, held
-        # until that statement finishes so a breakpoint on it can't fire a
-        # second time when a call it made returns into its remaining quads.
-        # See `_check_pause`.
+        # depth + line the last pause resumed from, so a breakpoint there doesn't fire again
+        # while control is still finishing that same statement
         self._resume_depth = None
         self._resume_line = None
-        # True only while the executor thread is parked in `_check_pause`.
-        # The `dbg_*` resume controls are gated on it, so a resume arriving
-        # from another thread while the program is running freely can't
-        # leave a stale token in `_resume_event`.
-        self._paused = False
+        self._paused = False  # true only while parked in _check_pause, waiting on a dbg_* control
         self._stop_requested = False
         self._resume_event = threading.Event()
-        # Every LABEL's quad index is resolved exactly once, up front, so
-        # JMP/JZ/JNZ during execution are an O(1) dict lookup rather than a
-        # linear scan for the matching label each time a jump happens.
+        # resolve every LABEL up front so JMP/JZ/JNZ are O(1) lookups instead of a linear scan
         self.labels = {q.result: i for i, q in enumerate(quads) if q.op == "LABEL"}
 
     def run(self):
-        """Initialize all VM state and execute quads from `pc = 0` until
-        `pc` runs off the end (via `HALT` or falling out of `main`).
-        `_NATIVE_RUNTIME_ERRORS` are caught exactly once here, at the
-        outermost loop, and re-raised as a `RuntimeVMError` carrying the
-        currently-executing quad's source line - this is the only place a
-        raw Python exception from a malformed program gets translated into
-        the clean `[RUNTIME ERROR]` reporting `main()` prints.
-
-        `steps` is a plain local (not `self.steps`) so counting it costs no
-        attribute lookup per quad - the VM's own `while` loop is otherwise
-        a flat dispatch with no other per-iteration bookkeeping. It's the
-        only cap against an infinite loop; `_call`'s recursion-depth check
-        is the corresponding cap against unbounded recursion (see
-        LIMITATIONS.md - previously there was no cap on either)."""
         self.globals = {}
         self.call_stack = []  # (return_pc, result_temp, caller_frame)
-        self.call_names = []  # function name for each entry in call_stack, for a debugger's call-stack view
+        self.call_names = []  # function name per call_stack entry, for a debugger's call-stack view
         self.exception_handlers = []  # (handler_pc, frame, call_stack_depth)
         self.pending_args = []
         self.current_exception = None
@@ -174,10 +95,7 @@ class IRExecutor:
         self.frame = self.globals
         self.pc = 0
         self._prev_line = None
-        # Call depth as of the last statement boundary, so a boundary can be
-        # recognized by a change of *frame* and not only of line - see
-        # `_check_pause`. Run state like `_prev_line`, not constructor state.
-        self._prev_depth = 0
+        self._prev_depth = 0  # call depth as of the last statement boundary, see _check_pause
 
         try:
             steps = 0
@@ -196,31 +114,17 @@ class IRExecutor:
         except _NATIVE_RUNTIME_ERRORS as e:
             line = self.quads[self.pc].line if self.pc < len(self.quads) else None
             if isinstance(e, ZeroDivisionError):
-                # _div/_mod are the only deliberate raisers among
-                # _NATIVE_RUNTIME_ERRORS, always with an already-clean,
-                # hand-authored message ("Division by zero"/"Modulo by
-                # zero") - never leaked Python-internal text, so pass it
-                # through unchanged.
+                # _div/_mod always raise with an already-clean hand-authored message
                 raise RuntimeVMError(str(e), line) from None
-            # Anything else here is an unexpected internal failure this VM
-            # doesn't have a hand-checked diagnostic for - report a generic,
-            # non-Python-specific message naming the failing quad instead of
-            # leaking raw Python exception text (e.g. "object of type
-            # 'NoneType' has no len()") through the [RUNTIME ERROR] channel.
-            # Should be unreachable for any well-formed program; kept as
-            # defense in depth.
+            # anything else here is an unexpected internal failure, not a hand-checked diagnostic
             raise RuntimeVMError(f"Unexpected internal error while executing quad {self.pc}", line) from None
 
-    # -- dispatch ------------------------------------------------------------
+    # dispatch
 
     def _exec(self, q):
-        """Execute exactly one quad and advance `self.pc` (every branch is
-        responsible for its own `pc` update - most fall through to `pc += 1`,
-        but jumps/calls/returns retarget `pc` directly instead). Grouped by
-        opcode family below, matching ir.py's module docstring's grouping."""
         op = q.op
 
-        # -- control flow / misc --
+        # control flow / misc
         if op in ("LABEL", "FUNC_BEGIN", "FUNC_END", "NOP"):
             self.pc += 1
         elif op == "JMP":
@@ -230,7 +134,7 @@ class IRExecutor:
         elif op == "JNZ":
             self.pc = self.labels[q.result] if self.resolve(q.arg1) else self.pc + 1
 
-        # -- data movement --
+        # data movement
         elif op == "ASSIGN":
             self.set_var(q.result, self.resolve(q.arg1))
             self.pc += 1
@@ -238,7 +142,7 @@ class IRExecutor:
             self.set_var(q.result, self._cast(self.resolve(q.arg1), q.arg2))
             self.pc += 1
 
-        # -- arithmetic / relational / logical --
+        # arithmetic / relational / logical
         elif op in BINARY_OPS:
             left, right = self.resolve(q.arg1), self.resolve(q.arg2)
             self.set_var(q.result, BINARY_OPS[op](left, right))
@@ -248,7 +152,7 @@ class IRExecutor:
             self.set_var(q.result, UNARY_OPS[op](value))
             self.pc += 1
 
-        # -- functions --
+        # functions
         elif op == "PARAM":
             self.pending_args.append(self.resolve(q.arg1))
             self.pc += 1
@@ -257,7 +161,7 @@ class IRExecutor:
         elif op == "RETURN":
             self._do_return(q)
 
-        # -- tuples (multi-return / destructuring) --
+        # tuples (multi-return / destructuring)
         elif op == "TUPLE_NEW":
             self.set_var(q.result, [])
             self.pc += 1
@@ -270,7 +174,7 @@ class IRExecutor:
             self._unpack(q)
             self.pc += 1
 
-        # -- arrays --
+        # arrays
         elif op == "ARR_NEW":
             size = self.resolve(q.arg1)
             if size < 0:
@@ -284,8 +188,7 @@ class IRExecutor:
             self.set_var(q.result, arr[idx])
             self.pc += 1
         elif op == "ARR_STORE":
-            # STORE: (index, value) -> array=result - operand order is
-            # swapped relative to ARR_LOAD, per ir.py's LOAD/STORE convention.
+            # STORE: (index, value) -> array=result, operand order flipped vs ARR_LOAD
             idx, value = self.resolve(q.arg1), self.resolve(q.arg2)
             arr = self.resolve(q.result)
             self._check_index(arr, idx)
@@ -295,7 +198,7 @@ class IRExecutor:
             self.set_var(q.result, len(self.resolve(q.arg1)))
             self.pc += 1
 
-        # -- structs --
+        # structs
         elif op == "STRUCT_NEW":
             fields = self.structs.get(q.arg1, {"fields": []})["fields"]
             self.set_var(q.result, StructValue(q.arg1, {fn: self._make_default(ft) for fn, ft in fields}))
@@ -311,7 +214,7 @@ class IRExecutor:
             self.resolve(q.result)[field] = value
             self.pc += 1
 
-        # -- strings --
+        # strings
         elif op == "CONCAT":
             self.set_var(q.result, self.resolve(q.arg1) + self.resolve(q.arg2))
             self.pc += 1
@@ -319,7 +222,7 @@ class IRExecutor:
             self.set_var(q.result, self._format(self.resolve(q.arg1)))
             self.pc += 1
 
-        # -- exceptions --
+        # exceptions
         elif op == "TRY_PUSH":
             self.exception_handlers.append((self.labels[q.arg1], self.frame, len(self.call_stack)))
             self.pc += 1
@@ -335,7 +238,7 @@ class IRExecutor:
             self.set_var(q.result, self.current_exception)
             self.pc += 1
 
-        # -- I/O --
+        # I/O
         elif op == "PRINT":
             sys.stdout.write(self._format(self.resolve(q.arg1)))
             self.pc += 1
@@ -349,46 +252,17 @@ class IRExecutor:
             self._do_input(q)
             self.pc += 1
 
-        # -- misc --
+        # misc
         elif op == "HALT":
             self.pc = len(self.quads)
         else:
             raise NotImplementedError(f"Unsupported opcode: {op}")
 
-    # -- debugger ----------------------------------------------------------
+    # debugger
 
     def _check_pause(self, line):
-        """Called once per quad (only when a debugger is attached, i.e.
-        `on_pause` and/or `on_line` was given) before that quad executes.
-        `on_line` fires on every *statement boundary* - the first quad of a
-        new source line - unconditionally, giving a debugger a full
-        execution trace even for lines that never pause. Pausing itself
-        (`on_pause`) only ever happens at that same statement-boundary
-        granularity, since one source line can lower to several quads and a
-        debugger should show one stop per line, not per quad. Also doubles
-        as the Stop control's check point: `run()`'s loop calls this for
-        every quad once `_stop_requested` is set even when no debugger is
-        attached (the `or self._stop_requested` arm of its guard), so a
-        stop request lands within one quad in any mode - and
-        `_next_input_token` has its own check, so a run blocked waiting for
-        input stops as soon as the input provider returns.
-
-        A boundary is normally just "the first quad of a new source line",
-        but while a step is in flight it is also the first quad at a new
-        *call depth*. Returning from a call re-enters the caller partway
-        through the very line that made it, so with a line-only test a
-        recursive `return n * factorial(n - 1);` unwinding through ten
-        frames offers no boundary at all until the line number finally
-        changes - and a Step Over issued inside that recursion ran to the
-        top-level call site instead of stopping in its caller. The extra
-        trigger is gated on `_stepping` so free-running and breakpoint-only
-        behavior keeps exactly the boundaries it always had.
-
-        A breakpoint is checked independently of the stepping state, so a
-        breakpoint inside a function being *stepped over* still pauses -
-        the same precedence every mainstream debugger uses. It is *not*
-        checked independently of the pause it just resumed from, though:
-        see `_resumed_statement`."""
+        # called before every quad once a debugger is attached. on_line/on_pause fire at each
+        # statement boundary; while stepping, a boundary also counts as "new call depth" so step-over works inside recursion
         if self._stop_requested:
             raise DebugStopped()
         depth = len(self.call_stack)
@@ -399,88 +273,40 @@ class IRExecutor:
         self._prev_depth = depth
         if self.on_line is not None:
             self.on_line(line)
-        # Evaluated at *every* boundary, not folded into the condition below:
-        # it retires itself, and short-circuiting past it on a line that isn't
-        # a breakpoint would leave the suppression armed to swallow a later,
-        # genuine hit on the resumed line.
+        # checked at every boundary so it reliably retires itself, not just when a breakpoint fires
         suppressed = self._resumed_statement(line)
         if self.on_pause is not None and (self._should_step_pause(line)
                                           or (line in self.breakpoints and not suppressed)):
             self._stepping = False
             self._step_depth = None
             self._step_line = None
-            # Drop any token left by a resume that arrived while this run
-            # was *not* paused before announcing the pause - past this
-            # point a `dbg_*` call sees `_paused` and its `set()` counts.
             self._resume_event.clear()
             self._paused = True
             self.on_pause(line)
             self._resume_event.wait()
             self._paused = False
             self._resume_event.clear()
-            # Every resume re-enters the tail of this same statement, so
-            # arm the suppression for all three controls, not just Continue.
             self._resume_depth = len(self.call_stack)
             self._resume_line = line
             if self._stop_requested:
                 raise DebugStopped()
 
     def _resumed_statement(self, line):
-        """Whether this boundary is the tail of the statement the last pause
-        resumed from - the one case a breakpoint on it must not fire again.
-        Retires the suppression as a side effect once that statement is over,
-        so it can never outlive the statement it was armed for.
-
-        A call is rarely the whole statement: `int sx, sy = swap(x, y);`
-        lowers to PARAM/CALL quads plus the ASSIGN quads that store the
-        results, all carrying that one line. Returning from the callee
-        therefore re-enters the line as a fresh statement boundary, and an
-        unguarded breakpoint there stopped a second time on the very line the
-        user just continued from - which is what made Continue look like it
-        had done nothing. `_should_step_pause` already refuses that re-entry
-        for a step-over; this is the same refusal for a breakpoint.
-
-        Depth is what keeps a *recursive* call honest: a breakpoint on
-        `return n * fact(n - 1);` still fires for each deeper invocation,
-        because those are genuinely new hits rather than the resumed
-        statement finishing up. Coming back shallower retires the
-        suppression, so an exception unwinding past the frame that paused
-        can't carry it along either."""
+        # true if this boundary is still the tail of the statement the last pause resumed from, e.g. "int x = f();" re-enters its own line once f() returns
+        # that would otherwise look like a fresh hit on a breakpoint just continued past
         if self._resume_depth is None:
             return False
         if len(self.call_stack) > self._resume_depth:
-            return False  # inside a call this statement made: not its tail
+            return False
         if line == self._resume_line:
             return True
-        # Another line in that frame (or a shallower one): the statement the
-        # suppression was armed for is done with.
         self._resume_depth = None
         self._resume_line = None
         return False
 
     def _should_step_pause(self, line):
-        """Whether the in-flight step (if any) is satisfied by this statement
-        boundary - the one place the debugger's two trace modes differ.
-
-        Step-into (`_step_depth is None`) takes the very next boundary,
-        wherever it lands, including the first line of a callee. Step-over
-        splits the two ways of being back in (or out of) the frame the step
-        was issued from, because only one of them wants the same-line veto:
-
-        *Shallower* than the arming frame - we stepped over a `return`, or an
-        exception unwound past it - is always a stop, whatever the line. The
-        line is no longer meaningful there: it belongs to a different frame's
-        statement, so it may legitimately repeat. `return n * factorial(n-1);`
-        is the case that matters. Every frame of that recursion pauses on the
-        same source line, and vetoing it by number made a Step Over inside the
-        recursion skip every intermediate frame and surface at the top-level
-        call - a Continue wearing a Step Over's name.
-
-        *Exactly* the arming depth keeps the veto: a call is rarely the whole
-        statement. `int x = f();` lowers to PARAM/CALL/ASSIGN quads that all
-        carry one line, so control comes back to that same line, in that same
-        frame, after RETURN - and stopping there would stop a second time on
-        the line the user just asked to step past."""
+        # step-into always stops at the next boundary. step-over stops once back at a shallower depth (the call/recursion returned), or same depth but a different line
+        # not same depth AND line, that's just the call site re-entering
         if not self._stepping:
             return False
         if self._step_depth is None:
@@ -492,17 +318,10 @@ class IRExecutor:
 
     @property
     def paused(self):
-        """Whether the run is currently parked in `_check_pause`, waiting for
-        one of the `dbg_*` resume controls. The three resume controls are the
-        only meaningful actions in that state, so a UI can gate them on this
-        rather than on merely holding an executor."""
         return self._paused
 
     def dbg_step(self):
-        """Resume a paused run for exactly one more source line, then pause
-        again - descending into a callee if this line calls one. Safe to
-        call from another thread while this executor's thread is blocked in
-        `_check_pause`; a no-op when the run isn't paused (see `paused`)."""
+        # resume for exactly one more line, descending into a call if this line makes one
         if not self._paused:
             return
         self._stepping = True
@@ -511,16 +330,7 @@ class IRExecutor:
         self._resume_event.set()
 
     def dbg_step_over(self):
-        """Resume a paused run for one more source line *in the current
-        frame*, running any function this line calls to completion instead
-        of pausing inside it. Stepping over the call in a recursive function
-        pauses in that function's own caller - the same source line, one
-        frame shallower - rather than running the whole recursion out.
-
-        Same threading contract as `dbg_step`: the `paused` check is what
-        makes reading `call_stack` and `_prev_line` from the caller's thread
-        safe here - the executor thread is parked in `_check_pause`, so
-        neither can move under us."""
+        # resume for one more line in the current frame, running any call it makes to completion
         if not self._paused:
             return
         self._stepping = True
@@ -529,13 +339,6 @@ class IRExecutor:
         self._resume_event.set()
 
     def dbg_continue(self):
-        """Resume a paused run until the next breakpoint (or the program
-        ends). A no-op when the run isn't paused: without that check a
-        Continue arriving mid-run (the keyboard shortcut and menu item reach
-        this even while the transport buttons are greyed) would leave a token
-        in `_resume_event` that makes the *next* breakpoint fall straight
-        through its `wait()`, so the UI would report a pause the executor
-        never actually took."""
         if not self._paused:
             return
         self._stepping = False
@@ -544,26 +347,17 @@ class IRExecutor:
         self._resume_event.set()
 
     def dbg_stop(self):
-        """Abort a debug run, whether it's currently paused or still
-        running freely between breakpoints."""
         self._stop_requested = True
         self._resume_event.set()
 
-    # -- storage ---------------------------------------------------------
+    # storage
 
     def _runtime_error(self, message):
-        """Raise a `RuntimeVMError` tagged with the currently-executing
-        quad's source line - the single helper every hand-checked runtime
-        error (array bounds, unpack arity, bad input) goes through."""
         line = self.quads[self.pc].line if self.pc < len(self.quads) else None
         raise RuntimeVMError(message, line)
 
     def resolve(self, operand):
-        """Read one quad operand's value: a `Const` unwraps to its literal
-        value; otherwise the name is looked up in the current frame first,
-        falling back to `self.globals`. This "check frame, then globals"
-        order - never the reverse - is what a local of the same name as a
-        global relies on to correctly shadow it."""
+        # frame is checked before globals, so a local correctly shadows a global of the same name
         if operand is None:
             return None
         if isinstance(operand, Const):
@@ -573,32 +367,18 @@ class IRExecutor:
         return self.globals[operand]
 
     def set_var(self, name, value):
-        """Write to one variable slot. The central trick of the whole VM:
-        because semantics.py already guaranteed every ir_name is unique
-        *program-wide* (see its `_fresh_ir_name`), "is this name currently a
-        key in `self.globals`?" is a completely unambiguous routing test -
-        there is no scope-nesting to walk, and no possibility that a local
-        write here could ever land in the globals dict instead (which is
-        exactly the bug an earlier flat-frame version of this VM had, per
-        the module docstring)."""
+        # every ir_name is unique program-wide (see semantics.py), so "is this a global name"
+        # is enough to route the write correctly, no scope walking needed
         if name in self.globals:
             self.globals[name] = value
         else:
             self.frame[name] = value
 
-    # -- functions / control flow -----------------------------------------
+    # functions / control flow
 
     def _call(self, q):
-        """`CALL name argcount result_temp`: pop exactly `argcount` values
-        off the tail of `pending_args` (built up by the preceding `PARAM`
-        quads), push `(return_pc, result_temp, caller_frame)` onto
-        `call_stack` - this list *is* the call stack, a plain Python list
-        rather than a real recursive Python function call, which is why a
-        deeply-recursive source program doesn't blow Python's own stack
-        (see LIMITATIONS.md for the flip side: nothing caps it either) -
-        then build a brand-new frame dict from the callee's parameter names
-        zipped with the popped argument values, and jump to its entry
-        point."""
+        # call_stack is a plain list, not real python recursion, so deep recursion in the
+        # source program doesn't blow python's own call stack
         name, argcount, result_temp = q.arg1, q.arg2, q.result
         if self.max_depth and len(self.call_stack) >= self.max_depth:
             self._runtime_error(f"Exceeded maximum call depth ({self.max_depth}) - possible infinite recursion")
@@ -612,13 +392,6 @@ class IRExecutor:
         self.pc = fn["entry"]
 
     def _do_return(self, q):
-        """`RETURN [value]`: with an empty `call_stack`, this is a return
-        from `main` itself - halt the whole program. Otherwise pop the
-        matching `(return_pc, result_temp, caller_frame)` entry `_call`
-        pushed, restore the caller's frame and resume at its saved
-        `return_pc`, and - if the call site actually wanted the result
-        (`result_temp is not None`) - write the returned value into that
-        slot in the now-restored caller frame."""
         value = self.resolve(q.arg1) if q.arg1 is not None else None
         if not self.call_stack:
             self.pc = len(self.quads)  # return from main -> halt
@@ -629,31 +402,17 @@ class IRExecutor:
             self.set_var(result_temp, value)
 
     def _unpack(self, q):
-        """`UNPACK tuple_value -> (name1, name2, ...)`: fan a Python list
-        (built by TUPLE_NEW/TUPLE_APPEND, or handed back from a multi-return
-        call) out into several named slots at once - a length mismatch is a
-        runtime error, not a silent truncate/pad, since semantics.py can't
-        always prove arity statically for every call shape. A `None` in
-        `names` is a `_` discard slot (see ir.py's `_gen_destructure`) -
-        still counted for the arity check, just not written anywhere."""
         values = self.resolve(q.arg1)
         names = q.result
         if len(values) != len(names):
             self._runtime_error(f"Expected {len(names)} value(s) from unpacking, got {len(values)}")
         for name, v in zip(names, values):
-            if name is not None:
+            if name is not None:  # None = a `_` discard slot, still counted for the arity check
                 self.set_var(name, v)
 
     def _unwind(self):
-        """Shared by `THROW` and `RETHROW`: pop the nearest still-registered
-        exception handler and jump straight to it, **truncating
-        `call_stack` back to the depth it had when that handler's
-        `TRY_PUSH` ran**. That truncation is what makes a `throw` several
-        function calls deep correctly unwind through all of them in one
-        step, rather than needing each intervening function to notice and
-        re-propagate the exception itself. With no handler left at all, the
-        exception has propagated out of `main` entirely - that's reported
-        as an `UncaughtException`, not silently swallowed."""
+        # truncating call_stack back to the handler's depth is what makes a throw several
+        # calls deep unwind through all of them in one step, instead of each one re-raising
         if not self.exception_handlers:
             line = self.quads[self.pc].line if self.pc < len(self.quads) else None
             raise UncaughtException(self.current_exception, line)
@@ -663,24 +422,11 @@ class IRExecutor:
         self.frame = handler_frame
 
     def _check_index(self, arr, idx):
-        """Bounds-check before every array read/write - Python would
-        happily raise its own `IndexError` for a negative or too-large
-        index, but this gives a clearer, VM-native error message (still
-        ultimately reported the same way, since `_runtime_error` raises the
-        same `RuntimeVMError` any native exception gets translated into)."""
         if not (0 <= idx < len(arr)):
             self._runtime_error(f"Array index {idx} out of bounds (length {len(arr)})")
 
     def _make_default(self, desc):
-        """Recursively build a fresh default value from a `TypeDesc` (see
-        ir.py): a scalar's `DEFAULTS` entry, a zero-filled array where every
-        element is its own freshly-built value - never one shared list/
-        struct aliased across every slot, which is what a naive `[x] * n`
-        would do (see the module docstring on arrays/structs being
-        reference values) - or a struct with every field
-        default-initialized the same way. Used by `ARR_NEW`/`STRUCT_NEW` in
-        place of the old flat `DEFAULTS.get(tag)` lookup, which only knew
-        the five primitive types and left any nested array/struct `None`."""
+        # build each element/field fresh so nested arrays/structs aren't aliased across slots
         if desc.tag == "array":
             return [self._make_default(desc.elem) for _ in range(desc.size or 0)]
         if desc.tag == "struct":
@@ -688,12 +434,11 @@ class IRExecutor:
             return StructValue(desc.name, {fn: self._make_default(ft) for fn, ft in fields})
         return DEFAULTS.get(desc.tag)
 
-    # -- values ------------------------------------------------------------
+    # values
 
     @staticmethod
     def _cast(value, type_tag):
-        # Only ever invoked for a semantics.py-approved numeric promotion
-        # (char->int, char->float, int->float), never an arbitrary cast.
+        # only used for semantics.py-approved numeric promotions (char->int, char->float, int->float)
         if type_tag == "float":
             return float(ord(value)) if isinstance(value, str) else float(value)
         if type_tag == "int":
@@ -701,15 +446,8 @@ class IRExecutor:
         return value
 
     def _format(self, value):
-        """Render a runtime value as the text `print`/interpolated strings
-        show: the language's own `true`/`false` spelling for bools (Python's
-        `str(True)` would print `"True"`), `Name{field: value, ...}` for
-        structs, `{v, v, ...}` for arrays (recursively formatted, so nested
-        arrays/structs print correctly), and plain `str()` for everything
-        else (ints, floats, strings, and chars - which are just 1-character
-        Python strs, so they need no special case)."""
         if isinstance(value, bool):
-            return "true" if value else "false"
+            return "true" if value else "false"  # not python's "True"/"False"
         if isinstance(value, StructValue):
             inner = ", ".join(f"{k}: {self._format(v)}" for k, v in value.items())
             return f"{value.type_name}{{{inner}}}"
@@ -718,14 +456,9 @@ class IRExecutor:
         return str(value)
 
     def _next_input_token(self, names=None):
-        """Pull the next whitespace-separated token from stdin, reading a
-        fresh line whenever the buffer runs dry. This is what lets a
-        program like `repeat { input(n); } until (n > 0);` read across
-        multiple physical lines correctly - `input()` doesn't assume "one
-        call = one line", it just keeps consuming from one continuous
-        stream of whitespace-separated tokens."""
+        # keeps pulling from stdin/input_provider across lines until there's a token to return
         while not self._input_buffer:
-            if self._stop_requested:  # a Stop that arrived while blocked in the provider
+            if self._stop_requested:
                 raise DebugStopped()
             raw = self.input_provider(names or []) if self.input_provider else sys.stdin.readline()
             if raw is None:
@@ -736,29 +469,18 @@ class IRExecutor:
         return self._input_buffer.pop(0)
 
     def _do_input(self, q):
-        """`INPUT -> (name1, name2, ...)`: read one token per target name,
-        coercing each to that name's declared type (from `var_types`,
-        recorded by ir.py) before storing it."""
         for name in q.result:
             text = self._next_input_token(q.result)
             self.set_var(name, self._coerce(text, self.var_types.get(name, "string")))
 
     def _coerce(self, text, type_tag):
-        """Parse one whitespace-separated input token according to the
-        target variable's type tag. A `bool` accepts `"true"`/`"1"` (case-
-        insensitive) as true, anything else as false, rather than raising on
-        unrecognized text. A malformed `int`/`float` token is a clean
-        runtime error, not a raw Python traceback, hence the explicit
-        `try`/`except ValueError` here rather than letting it propagate to
-        the generic `_NATIVE_RUNTIME_ERRORS` catch in `run()` (which would
-        still work, just with a less specific message)."""
         try:
             if type_tag == "int":
                 return int(text)
             if type_tag == "float":
                 return float(text)
             if type_tag == "bool":
-                return text.strip().lower() in ("true", "1")
+                return text.strip().lower() in ("true", "1")  # anything else reads as false
             if type_tag == "char":
                 return text[0] if text else "\0"
             return text
@@ -767,12 +489,6 @@ class IRExecutor:
 
 
 def main():
-    """CLI entry point: `python interpreter.py <source_file> [--ir] [--symbols] [--trace]`.
-    Runs the complete pipeline - scan, parse, analyze, generate, execute -
-    exiting `2` if scanning/parsing/semantic analysis found any error
-    (nothing runs in that case) or `3` if execution itself fails
-    (`RuntimeVMError`/`UncaughtException`), matching the exit-code contract
-    described in `README.md`."""
     cli = argparse.ArgumentParser(description="CSC617M Custom Language Interpreter")
     cli.add_argument("source_file", help="Path to source file to run")
     cli.add_argument("--ir", action="store_true", help="Print the generated intermediate code (quadruples) before running")
@@ -812,9 +528,7 @@ def main():
         sys.exit(2)
 
     if args.optimize:
-        # Imported lazily so the default (unoptimized) path doesn't pay for
-        # loading a module it never uses.
-        import optimizer
+        import optimizer  # lazy import, so the default (unoptimized) path doesn't pay for it
         try:
             result = optimizer.optimize(quads, functions, var_types)
         except optimizer.OptimizerError as e:

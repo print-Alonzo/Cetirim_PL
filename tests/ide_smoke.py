@@ -1,20 +1,5 @@
-"""Programmatic smoke test for the IDE (`cetirim_ide.py`).
-
-Manual/auxiliary tool - NOT run by run_tests.py, so the main suite stays
-Tk-free. Run it after touching the IDE or the debugger hooks:
-
-    python3 tests/ide_smoke.py            # repo root inferred
-    python3 tests/ide_smoke.py <repo>     # or given explicitly
-
-Needs a Python whose tkinter is linked against Tk 8.6+ (Apple's bundled
-Tk 8.5 draws blank windows; see README.md's "Cetirim IDE" section). It
-briefly creates a real - but hidden - IDE window.
-
-It runs the real Tk mainloop (the IDE's worker threads marshal UI updates
-via `after()`, which requires the main thread to be inside mainloop) and
-drives the test steps as a generator advanced by scheduled callbacks.
-Exit code 0 = every check passed, 1 = failures, 42 = no display available.
-"""
+# GUI smoke test for cetirim_ide.py, not run by run_tests.py
+# usage: python3 tests/ide_smoke.py [repo]
 import functools
 import sys
 import time
@@ -68,13 +53,11 @@ def finished():
             or "Runtime error" in text)
 
 
-# --- Treeview readers ------------------------------------------------------
-# The debugger panels and the Problems list are Treeviews (aligned columns
-# beat "name = value" strings in a Listbox), so the checks below read rows
-# through these instead of Listbox.get().
+# Treeview readers: the debugger panels and Problems list are Treeviews, not Listboxes,
+# so the checks below read rows through these helpers instead of Listbox.get()
 
 def tree_texts(tree, parent=""):
-    """Every row's column-#0 text, depth-first."""
+    # every row's column-0 text, depth-first
     rows = []
     for item in tree.get_children(parent):
         rows.append(tree.item(item, "text"))
@@ -83,8 +66,7 @@ def tree_texts(tree, parent=""):
 
 
 def tree_pairs(tree, parent=""):
-    """Leaf rows of a name/value tree, rendered "name = value". Group rows
-    (Locals/Globals) carry no values and are skipped."""
+    # leaf rows rendered as "name = value", group rows (Locals/Globals) have no values
     rows = []
     for item in tree.get_children(parent):
         values = tree.item(item, "values")
@@ -100,11 +82,7 @@ def problem_rows():
 
 
 def watch_pauses():
-    """Start recording every line the IDE is told to pause at, and return the
-    list. Lets a check assert "stopped exactly once" outright instead of
-    inferring it from whether the run timed out. Restore with
-    `unwatch_pauses()`; the wrapper shadows the bound method per instance, so
-    the real handler still runs underneath it."""
+    # records every line the IDE pauses at, so a check can assert "stopped exactly once" instead of guessing from a timeout - restore with unwatch_pauses()
     seen = []
 
     def wrapper(line):
@@ -120,9 +98,7 @@ def unwatch_pauses():
 
 
 def paused_at(line):
-    """True once on_debug_pause ran for `line`: the current-line highlight is
-    on that line and the Step button was re-enabled (the status-bar text is
-    unreliable - the editor's debounced _refresh_all overwrites it)."""
+    # true once on_debug_pause ran for `line`, checking the highlight + step button instead of the status bar text since the editor's debounced _refresh_all overwrites that
     def cond():
         rng = ide.editor.tag_ranges("current_line")
         return (bool(rng) and str(rng[0]).startswith(f"{line}.")
@@ -135,7 +111,7 @@ expected3 = (REPO / "samples" / "prog3_functions_expected.txt").read_text(encodi
 
 
 def driver():
-    # ---- Test 1: welcome sample, interactive terminal input ----------------
+    # Test 1: welcome sample, interactive terminal input
     ide.run_program()
     ok = yield (lambda: ide.pending_input is not None, 30, "input request (welcome sample)")
     if ok:
@@ -147,14 +123,14 @@ def driver():
         check("terminal input -> interpolated output", "Welcome, Alonzo!" in console_text(),
               repr(console_text()[-200:]))
 
-    # ---- Test 2: samples/prog3_functions.src runs, matches golden ----------
+    # Test 2: samples/prog3_functions.src runs, matches golden
     load(prog3.read_text(encoding="utf-8"), prog3)
     ide.run_program()
     yield (finished, 30, "prog3 finish")
     check("prog3 output matches committed golden", expected3 in console_text(),
           repr(console_text()[:300]))
 
-    # ---- Test 3: tests/unequal_dims.src (2-D arrays, post-IDE-branch) ------
+    # Test 3: tests/unequal_dims.src (2-D arrays, post-IDE-branch)
     ud = REPO / "tests" / "unequal_dims.src"
     load(ud.read_text(encoding="utf-8"), ud)
     ide.run_program()
@@ -163,7 +139,7 @@ def driver():
     check("unequal_dims (post-merge feature) output matches golden", expected_ud in console_text(),
           repr(console_text()[:300]))
 
-    # ---- Test 4: debugger - breakpoint, panels, watch, step, continue ------
+    # Test 4: debugger - breakpoint, panels, watch, step, continue
     load(prog3.read_text(encoding="utf-8"), prog3)
     ide.breakpoints.clear()
     ide.breakpoints.add(87)  # the "Before swap" print - x=10, y=20 assigned
@@ -198,7 +174,7 @@ def driver():
               any("not in scope" in r for r in tree_pairs(ide.watch_list)),
               repr(tree_pairs(ide.watch_list)))
 
-    # ---- Test 5: debugger Stop from a paused state -------------------------
+    # Test 5: debugger Stop from a paused state
     load(prog3.read_text(encoding="utf-8"), prog3)
     ide.breakpoints.clear()
     ide.breakpoints.add(87)
@@ -211,7 +187,7 @@ def driver():
               repr(console_text()[:200]))
         check("stop re-disables the stop button", str(ide.stop_btn.cget("state")) == "disabled")
 
-    # ---- Test 6: Problems tab on a syntax error, run bails safely ----------
+    # Test 6: Problems tab on a syntax error, run bails safely
     load("void main() {\n    print(1)\n}\n")
     ok6 = ide.check_code()
     problems = problem_rows()
@@ -229,7 +205,7 @@ def driver():
     ide.run_program()  # must return early without starting a thread
     check("run_program bails on syntax errors without crashing", ide.executor is None)
 
-    # ---- Test 7: Optimizer tab on tests/optimizer_demo.src -----------------
+    # Test 7: Optimizer tab on tests/optimizer_demo.src
     demo = REPO / "tests" / "optimizer_demo.src"
     load(demo.read_text(encoding="utf-8"), demo)
     ide.show_optimization()
@@ -250,7 +226,7 @@ def driver():
     check("optimizer_demo still runs and matches golden", expected_demo in console_text(),
           repr(console_text()[:200]))
 
-    # ---- Test 8: empty terminal submit re-prompts instead of erroring ------
+    # Test 8: empty terminal submit re-prompts instead of erroring
     load(SAMPLE)
     ide.run_program()
     ok = yield (lambda: ide.pending_input is not None, 30, "input request (empty-submit test)")
@@ -269,7 +245,7 @@ def driver():
         check("run still completes normally after an empty submit",
               "Welcome, Alonzo!" in console_text(), repr(console_text()[-200:]))
 
-    # ---- Test 9: Stop interrupts a run blocked at an input() prompt --------
+    # Test 9: Stop interrupts a run blocked at an input() prompt
     load(SAMPLE)
     ide.run_program()  # plain Run, not Debug
     ok = yield (lambda: ide.pending_input is not None, 30, "input request (stop test)")
@@ -282,7 +258,7 @@ def driver():
               "$ Program stopped." in console_text() and "Runtime error" not in console_text(),
               repr(console_text()[-200:]))
 
-    # ---- Test 10: Stop halts a free-running loop in plain Run mode ---------
+    # Test 10: Stop halts a free-running loop in plain Run mode
     load("void main() {\n"
          "    var int i;\n"
          "    var int s = 0;\n"
@@ -300,7 +276,7 @@ def driver():
           "$ Program stopped." in console_text() and "Runtime error" not in console_text()
           and "100000000" not in console_text(), repr(console_text()[-250:]))
 
-    # ---- Test 11: starting a new run retires a paused old one cleanly ------
+    # Test 11: starting a new run retires a paused old one cleanly
     load(prog3.read_text(encoding="utf-8"), prog3)
     ide.breakpoints.clear()
     ide.breakpoints.add(87)
@@ -315,7 +291,7 @@ def driver():
         check("stale run did not clobber the new run's state",
               ide.executor is None and str(ide.step_btn.cget("state")) == "disabled")
 
-    # ---- Test 12: "(top level)" call-stack fallback is reachable -----------
+    # Test 12: "(top level)" call-stack fallback is reachable
     ide.executor = types.SimpleNamespace(call_names=[], frame={}, globals={})
     ide.refresh_debug_panels()
     check("call-stack panel falls back to (top level)",
@@ -323,7 +299,7 @@ def driver():
           repr(tree_texts(ide.callstack_list)))
     ide.executor = None
 
-    # ---- Test 13: find/replace bar -----------------------------------------
+    # Test 13: find/replace bar
     load("void main() {\n    print(1);\n    print(2);\n}\n")
     ide.show_find_bar()
     ide.find_entry.delete(0, "end")
@@ -342,7 +318,7 @@ def driver():
     check("hiding the find bar clears its highlights",
           not ide.editor.tag_ranges("find_match") and not ide.editor.tag_ranges("find_current"))
 
-    # ---- Test 14: Symbols tab shows the semantic analyzer's symbol table ---
+    # Test 14: Symbols tab shows the semantic analyzer's symbol table
     load(prog3.read_text(encoding="utf-8"), prog3)
     ide.check_code()
     problems_rows = problem_rows()
@@ -362,7 +338,7 @@ def driver():
             check("main's locals expose their unique ir names",
                   any("ir: main." in d for d in details), repr(details[:4]))
 
-    # ---- Test 15: paused status segment survives the debounced refresh -----
+    # Test 15: paused status segment survives the debounced refresh
     ide.breakpoints.clear()
     ide.breakpoints.add(87)
     ide.debug_program()
@@ -375,7 +351,7 @@ def driver():
         yield (finished, 30, "stop after the status-segment test")
     ide.breakpoints.clear()
 
-    # ---- Test 16: panel tab strip behaves like the Notebook it replaced ----
+    # Test 16: panel tab strip behaves like the Notebook it replaced
     ide.bottom_tabs.select(ide.symbols_frame)
     check("tab strip reports the selected frame",
           ide.bottom_tabs.select() == str(ide.symbols_frame), repr(ide.bottom_tabs.select()))
@@ -386,12 +362,12 @@ def driver():
     ide.bottom_tabs.select(0)
     check("tab strip selects by index too", ide.bottom_tabs.select() != str(ide.symbols_frame))
 
-    # ---- Test 17: the outline, caret line and font-size controls ------------
+    # Test 17: the outline, caret line and font-size controls
     def outline_rows(parent=""):
         return [ide.outline.item(i, "text") for i in ide.outline.get_children(parent)]
 
     def outline_child_rows(needle):
-        """Rows nested under the first top-level row containing `needle`."""
+        # rows nested under the first top-level row containing `needle`
         for i in ide.outline.get_children(""):
             if needle in ide.outline.item(i, "text"):
                 return outline_rows(i)
@@ -405,9 +381,8 @@ def driver():
           [r.split()[-1] for r in outline_child_rows("Point")] == ["x"],
           repr(outline_child_rows("Point")))
 
-    # An inline `typedef struct C {...} R;` used to be split by the outline's
-    # regex at the first ';', listing the field `r` as a typedef. It has to
-    # produce a struct row (with its fields) plus the alias, and nothing else.
+    # an inline `typedef struct C {...} R;` used to be split by the outline's regex at the first
+    # ';', listing field `r` as a typedef instead - it has to produce a struct row plus the alias
     load("const int LIMIT = 5;\n"
          "typedef struct Color { int r; int g; int b; } RGB;\n"
          "int scale(int base, int factor) {\n"
@@ -461,7 +436,7 @@ def driver():
           repr(ide.font_editor.cget("size")))
     ide.font_editor.configure(size=before)
 
-    # ---- Test 18: debugger transport lives in the toolbar, idle by default --
+    # Test 18: debugger transport lives in the toolbar, idle by default
     check("transport buttons are disabled with no run in flight",
           all(str(b.cget("state")) == "disabled"
               for b in (ide.step_btn, ide.step_over_btn, ide.continue_btn, ide.stop_btn)))
@@ -469,15 +444,11 @@ def driver():
           not str(ide.step_btn).startswith(str(ide.bottom_tabs)),
           f"{ide.step_btn} vs {ide.bottom_tabs}")
 
-    # ---- Test 19: syntax highlighting is scanner-driven ---------------------
-    # Every check here is a case the two regexes this replaced got wrong: they
-    # could not see that a word sat inside a comment or a string, and they
-    # measured a literal by its escape-resolved lexeme rather than its width
-    # on screen.
+    # Test 19: syntax highlighting is scanner-driven, every check here is a case the two regexes this replaced got wrong
     SYNTAX_TAGS = {"keyword", "type", "string", "number", "comment", "function", "error"}
 
     def tags_at(needle, offset=0):
-        """Syntax tags on the character `offset` past the start of `needle`."""
+        # syntax tags on the character `offset` past the start of `needle`
         start = ide.editor.search(needle, "1.0", "end")
         if not start:
             return set()
@@ -508,21 +479,17 @@ def driver():
           tags_at("twice(i)") == {"function"}, repr(tags_at("twice(i)")))
     check("'//' inside a string literal does not start a comment",
           tags_at('"http://x.com"', 8) == {"string"}, repr(tags_at('"http://x.com"', 8)))
-    # 6 source characters: " a \ t b " - the old length arithmetic used the
-    # 5-character resolved lexeme and left the closing quote unpainted.
+    # 6 source characters (" a \ t b ") but a 5-character resolved lexeme, the old length arithmetic used the lexeme and left the closing quote unpainted
     check("a literal with an escape is painted through its closing quote",
           tags_at('"a\\tb"', 5) == {"string"}, repr(tags_at('"a\\tb"', 5)))
     check("a multi-line block comment is painted to its end",
           tags_at("comment */", 9) == {"comment"}, repr(tags_at("comment */", 9)))
 
-    # An unterminated block comment: the regex needed the closing '*/' and so
-    # left it plain until the moment it was typed.
+    # an unterminated block comment: the old regex needed the closing '*/' and left it plain until the moment it was typed
     load("var int x;\n/* still typing this\n")
     check("an unterminated block comment is grey while being typed",
           tags_at("still typing") == {"comment"}, repr(tags_at("still typing")))
-    # The editor's buffer has no trailing newline, so the comment runs to the
-    # last character - which the scanner's loop used to stop one short of,
-    # leaking it back out as a stray token the highlighter would then colour.
+    # the buffer has no trailing newline, so the comment runs to the last character - the scanner's loop used to stop one short of that and leak it back out as a stray token
     leaked = [t.lexeme for t in Scanner(ide.source()).scan_all()[0] if t.ttype != TT.EOF]
     check("an unterminated block comment consumes its last character",
           leaked == ["var", "int", "x", ";"], repr(leaked))
@@ -533,7 +500,7 @@ def driver():
           "error" in ide.editor.tag_names(ide.editor.search("still", "1.0", "end")),
           repr(ide.editor.tag_names(ide.editor.search("still", "1.0", "end"))))
 
-    # ---- Test 20: token classes differ in weight/slant, not only colour -----
+    # Test 20: token classes differ in weight/slant, not only colour
     check("keywords are bold", str(ide.editor.tag_cget("keyword", "font")) == str(ide.font_editor_bold),
           repr(ide.editor.tag_cget("keyword", "font")))
     check("comments are italic", str(ide.editor.tag_cget("comment", "font")) == str(ide.font_editor_italic),
@@ -546,14 +513,8 @@ def driver():
           f"bold={ide.font_editor_bold.cget('size')} italic={ide.font_editor_italic.cget('size')}")
     ide.change_font_size(-2)
 
-    # ---- Test 21: the two trace modes - Step In vs Step Over ---------------
-    # samples/prog3_functions.src line 88 is `int sx, sy = swap(x, y);` and
-    # swap's body is line 17, so the whole difference between the modes is
-    # which of those the next pause lands on. Both runs break on 87 and step
-    # once to reach 88 so the pause under test is always arrived at by a
-    # *step*, keeping each mode's own behavior the only thing these checks
-    # depend on. (Breaking on 88 directly is fine - Test 22 does exactly that -
-    # it would just fold the breakpoint path into a test about stepping.)
+    # Test 21: the two trace modes, Step In vs Step Over - line 88 calls swap() (body on line 17),
+    # so the whole difference is which of those the next pause after stepping from 87 lands on
     load(prog3.read_text(encoding="utf-8"), prog3)
     ide.breakpoints.clear()
     ide.breakpoints.add(87)
@@ -597,8 +558,7 @@ def driver():
         check("a stepped-over debug run still produces the full program output",
               expected3 in console_text(), repr(console_text()[:200]))
 
-    # A breakpoint inside a function being stepped over still wins: the
-    # stepping state gates only the step's own pause, never a breakpoint's.
+    # a breakpoint inside a function being stepped over still wins, the stepping state only gates the step's own pause, never a breakpoint's
     load(prog3.read_text(encoding="utf-8"), prog3)
     ide.breakpoints.clear()
     ide.breakpoints.update({91, 25})  # the array_sum(...) call, and a line in its loop
@@ -614,12 +574,8 @@ def driver():
     check("Step Over goes idle again once the run ends",
           str(ide.step_over_btn.cget("state")) == "disabled")
 
-    # ---- Test 22: Continue past a breakpoint on a line that calls ----------
-    # Line 88 is `int sx, sy = swap(x, y);`, which lowers to PARAM/CALL quads
-    # *plus* the ASSIGNs storing the results - all carrying line 88. Returning
-    # from swap re-enters that line as a fresh statement boundary, where the
-    # breakpoint used to fire a second time, so Continue looked like it had
-    # done nothing at all.
+    # Test 22: Continue past a breakpoint on a call line - returning from swap() used to
+    # re-enter line 88 as a fresh boundary and fire the breakpoint a second time
     load(prog3.read_text(encoding="utf-8"), prog3)
     ide.breakpoints.clear()
     ide.breakpoints.add(88)
@@ -636,10 +592,7 @@ def driver():
               expected3 in console_text(), repr(console_text()[:200]))
     unwatch_pauses()
 
-    # ---- Test 23: that suppression is scoped to the one statement ----------
-    # Line 25 is array_sum's `total = total + arr[i];`, executed six times.
-    # Refusing the resumed statement's own re-entry must not also swallow a
-    # genuine re-hit on the loop's next pass.
+    # Test 23: that suppression is scoped to one statement, not the whole loop it's in
     load(prog3.read_text(encoding="utf-8"), prog3)
     ide.breakpoints.clear()
     ide.breakpoints.add(25)
@@ -653,14 +606,8 @@ def driver():
         ide.debug_continue()
         yield (finished, 30, "finish after the loop-breakpoint test")
 
-    # ---- Test 24: a resume that arrives while nothing is paused ------------
-    # F9 and the Tools menu reach these handlers even while the transport
-    # buttons are greyed. A program blocked at an input() prompt is running,
-    # not paused - its thread is parked in the input provider, not in
-    # _check_pause - so a resume sent then must be a complete no-op. It used
-    # to leave a token in the resume event, and the *next* breakpoint then
-    # fell straight through its wait(): the IDE announced a pause the executor
-    # never actually took and the program ran on to completion underneath it.
+    # Test 24: a resume sent while nothing is paused (e.g. blocked on input) must be a
+    # no-op, it used to leave a stray token that made the next breakpoint fall through
     load(SAMPLE)
     ide.breakpoints.clear()
     ide.breakpoints.add(9)  # SAMPLE's `print(`Welcome, {name}!`);`, right after input(name)
@@ -688,17 +635,8 @@ def driver():
               "Welcome, Alonzo!" in console_text(), repr(console_text()[-200:]))
     ide.breakpoints.clear()
 
-    # ---- Test 25: Step Over on a *recursive* call line ----------------------
-    # Line 51 is factorial's `return n * factorial(n - 1);` - one source line
-    # that every frame of the recursion pauses on. Step Over there must run one
-    # nested call and come back to that same line one frame shallower. It used
-    # to run the whole recursion out and surface at line 99, the top-level
-    # `print("5! =", factorial(5));`: the step's "not the line I stepped off of"
-    # guard can't be satisfied while a recursion unwinds on one line, so Step
-    # Over degraded into Continue.
-    #
-    # The pause line alone can't tell these frames apart, so each wait also pins
-    # how many pauses have happened, and the checks read the call stack and `n`.
+    # Test 25: Step Over on a recursive call line (every frame pauses on the same line) used to
+    # run the whole recursion out instead of stopping one frame shallower - pause count and `n` distinguish the frames since the line number alone can't
     load(prog3.read_text(encoding="utf-8"), prog3)
     ide.breakpoints.clear()
     ide.breakpoints.add(51)
@@ -713,9 +651,7 @@ def driver():
               ok and tree_texts(ide.callstack_list) == ["factorial", "factorial", "main"],
               repr(tree_texts(ide.callstack_list)))
     if ok:
-        # Cleared first so the step's own pause is the only stop left - the
-        # executor reads the IDE's live breakpoint set, so this takes effect
-        # immediately.
+        # cleared first so the step's own pause is the only stop left - takes effect immediately since the executor reads the IDE's live breakpoint set
         ide.breakpoints.clear()
         ide.debug_step_over()
         ok = yield (lambda: paused_at(51)() and len(seen) == 3, 30,
