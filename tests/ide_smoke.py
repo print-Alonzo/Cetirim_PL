@@ -99,6 +99,26 @@ def problem_rows():
             for i in ide.problems.get_children()]
 
 
+def watch_pauses():
+    """Start recording every line the IDE is told to pause at, and return the
+    list. Lets a check assert "stopped exactly once" outright instead of
+    inferring it from whether the run timed out. Restore with
+    `unwatch_pauses()`; the wrapper shadows the bound method per instance, so
+    the real handler still runs underneath it."""
+    seen = []
+
+    def wrapper(line):
+        seen.append(line)
+        CetirimIDE.on_debug_pause(ide, line)
+
+    ide.on_debug_pause = wrapper
+    return seen
+
+
+def unwatch_pauses():
+    del ide.on_debug_pause
+
+
 def paused_at(line):
     """True once on_debug_pause ran for `line`: the current-line highlight is
     on that line and the Step button was re-enabled (the status-bar text is
@@ -530,10 +550,10 @@ def driver():
     # samples/prog3_functions.src line 88 is `int sx, sy = swap(x, y);` and
     # swap's body is line 17, so the whole difference between the modes is
     # which of those the next pause lands on. Both runs break on 87 and step
-    # once to reach 88, rather than breaking on 88 directly: a call statement's
-    # own line is revisited after RETURN (the quads that store the result carry
-    # it too), so a breakpoint there would fire a second time on the way back
-    # and mask what the step itself did.
+    # once to reach 88 so the pause under test is always arrived at by a
+    # *step*, keeping each mode's own behavior the only thing these checks
+    # depend on. (Breaking on 88 directly is fine - Test 22 does exactly that -
+    # it would just fold the breakpoint path into a test about stepping.)
     load(prog3.read_text(encoding="utf-8"), prog3)
     ide.breakpoints.clear()
     ide.breakpoints.add(87)
@@ -593,6 +613,80 @@ def driver():
         yield (finished, 30, "finish after the breakpoint-in-step-over test")
     check("Step Over goes idle again once the run ends",
           str(ide.step_over_btn.cget("state")) == "disabled")
+
+    # ---- Test 22: Continue past a breakpoint on a line that calls ----------
+    # Line 88 is `int sx, sy = swap(x, y);`, which lowers to PARAM/CALL quads
+    # *plus* the ASSIGNs storing the results - all carrying line 88. Returning
+    # from swap re-enters that line as a fresh statement boundary, where the
+    # breakpoint used to fire a second time, so Continue looked like it had
+    # done nothing at all.
+    load(prog3.read_text(encoding="utf-8"), prog3)
+    ide.breakpoints.clear()
+    ide.breakpoints.add(88)
+    seen = watch_pauses()
+    ide.debug_program()
+    ok = yield (paused_at(88), 30, "pause at the call on line 88")
+    if ok:
+        ide.debug_continue()
+        ok = yield (finished, 30, "Continue past a breakpoint on a call line")
+        check("Continue past a breakpoint on a call line reaches the end", ok)
+        check("returning from the call doesn't re-fire its own breakpoint",
+              seen == [88], repr(seen))
+        check("that run still produced the full program output",
+              expected3 in console_text(), repr(console_text()[:200]))
+    unwatch_pauses()
+
+    # ---- Test 23: that suppression is scoped to the one statement ----------
+    # Line 25 is array_sum's `total = total + arr[i];`, executed six times.
+    # Refusing the resumed statement's own re-entry must not also swallow a
+    # genuine re-hit on the loop's next pass.
+    load(prog3.read_text(encoding="utf-8"), prog3)
+    ide.breakpoints.clear()
+    ide.breakpoints.add(25)
+    ide.debug_program()
+    ok = yield (paused_at(25), 30, "first pause in array_sum's loop")
+    if ok:
+        ide.debug_continue()
+        ok = yield (paused_at(25), 30, "second pause in array_sum's loop")
+        check("a breakpoint re-entered by a loop still stops on the next pass", ok)
+        ide.breakpoints.clear()
+        ide.debug_continue()
+        yield (finished, 30, "finish after the loop-breakpoint test")
+
+    # ---- Test 24: a resume that arrives while nothing is paused ------------
+    # F9 and the Tools menu reach these handlers even while the transport
+    # buttons are greyed. A program blocked at an input() prompt is running,
+    # not paused - its thread is parked in the input provider, not in
+    # _check_pause - so a resume sent then must be a complete no-op. It used
+    # to leave a token in the resume event, and the *next* breakpoint then
+    # fell straight through its wait(): the IDE announced a pause the executor
+    # never actually took and the program ran on to completion underneath it.
+    load(SAMPLE)
+    ide.breakpoints.clear()
+    ide.breakpoints.add(9)  # SAMPLE's `print(`Welcome, {name}!`);`, right after input(name)
+    ide.debug_program()
+    ok = yield (lambda: ide.pending_input is not None, 30, "input prompt during a debug run")
+    if ok:
+        check("a run blocked on input reports itself as not paused",
+              ide.executor is not None and not ide.executor.paused)
+        ide.debug_continue()  # all three are strays: nothing is parked
+        ide.debug_step()
+        ide.debug_step_over()
+        check("a stray resume leaves the run status alone",
+              "Debugging" in str(ide.status_run.cget("text")), str(ide.status_run.cget("text")))
+        ide.terminal_entry.config(state="normal")
+        ide.terminal_entry.delete(0, "end")
+        ide.terminal_entry.insert(0, "Alonzo")
+        ide.submit_terminal_input()
+        ok = yield (paused_at(9), 30, "breakpoint after the stray resumes")
+        check("a stray resume can't make the next breakpoint fall through", ok)
+        check("the run is genuinely parked at that breakpoint",
+              ide.executor is not None and ide.executor.paused)
+        ide.debug_continue()
+        yield (finished, 30, "finish after the stray-resume test")
+        check("the stray-resume run still produced its output",
+              "Welcome, Alonzo!" in console_text(), repr(console_text()[-200:]))
+    ide.breakpoints.clear()
 
 
 gen = driver()
