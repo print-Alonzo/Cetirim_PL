@@ -688,6 +688,57 @@ def driver():
               "Welcome, Alonzo!" in console_text(), repr(console_text()[-200:]))
     ide.breakpoints.clear()
 
+    # ---- Test 25: Step Over on a *recursive* call line ----------------------
+    # Line 51 is factorial's `return n * factorial(n - 1);` - one source line
+    # that every frame of the recursion pauses on. Step Over there must run one
+    # nested call and come back to that same line one frame shallower. It used
+    # to run the whole recursion out and surface at line 99, the top-level
+    # `print("5! =", factorial(5));`: the step's "not the line I stepped off of"
+    # guard can't be satisfied while a recursion unwinds on one line, so Step
+    # Over degraded into Continue.
+    #
+    # The pause line alone can't tell these frames apart, so each wait also pins
+    # how many pauses have happened, and the checks read the call stack and `n`.
+    load(prog3.read_text(encoding="utf-8"), prog3)
+    ide.breakpoints.clear()
+    ide.breakpoints.add(51)
+    seen = watch_pauses()
+    ide.debug_program()
+    ok = yield (paused_at(51), 30, "first pause in factorial (n = 5)")
+    if ok:
+        ide.debug_continue()
+        ok = yield (lambda: paused_at(51)() and len(seen) == 2, 30,
+                    "second pause, one frame deeper (n = 4)")
+        check("a breakpoint on a recursive call line fires once per frame",
+              ok and tree_texts(ide.callstack_list) == ["factorial", "factorial", "main"],
+              repr(tree_texts(ide.callstack_list)))
+    if ok:
+        # Cleared first so the step's own pause is the only stop left - the
+        # executor reads the IDE's live breakpoint set, so this takes effect
+        # immediately.
+        ide.breakpoints.clear()
+        ide.debug_step_over()
+        ok = yield (lambda: paused_at(51)() and len(seen) == 3, 30,
+                    "step over lands in the calling frame")
+        check("Step Over on a recursive call stops in its caller rather than "
+              "running the recursion out", ok, repr(seen))
+        check("that pause is one frame shallower",
+              tree_texts(ide.callstack_list) == ["factorial", "main"],
+              repr(tree_texts(ide.callstack_list)))
+        check("and it is the caller's own invocation (n = 5)",
+              "n = 5" in tree_pairs(ide.vars_list), repr(tree_pairs(ide.vars_list)))
+        ide.debug_step_over()
+        ok = yield (paused_at(99), 30, "step over the outermost frame's return")
+        check("stepping over the last return lands on the calling line in main",
+              ok and tree_texts(ide.callstack_list) == ["main"],
+              repr(tree_texts(ide.callstack_list)))
+        ide.debug_continue()
+        yield (finished, 30, "finish after the recursion step-over test")
+        check("the recursion step-over run still produced the full program output",
+              expected3 in console_text(), repr(console_text()[:200]))
+    unwatch_pauses()
+    ide.breakpoints.clear()
+
 
 gen = driver()
 state = {}

@@ -174,6 +174,10 @@ class IRExecutor:
         self.frame = self.globals
         self.pc = 0
         self._prev_line = None
+        # Call depth as of the last statement boundary, so a boundary can be
+        # recognized by a change of *frame* and not only of line - see
+        # `_check_pause`. Run state like `_prev_line`, not constructor state.
+        self._prev_depth = 0
 
         try:
             steps = 0
@@ -369,16 +373,30 @@ class IRExecutor:
         `_next_input_token` has its own check, so a run blocked waiting for
         input stops as soon as the input provider returns.
 
+        A boundary is normally just "the first quad of a new source line",
+        but while a step is in flight it is also the first quad at a new
+        *call depth*. Returning from a call re-enters the caller partway
+        through the very line that made it, so with a line-only test a
+        recursive `return n * factorial(n - 1);` unwinding through ten
+        frames offers no boundary at all until the line number finally
+        changes - and a Step Over issued inside that recursion ran to the
+        top-level call site instead of stopping in its caller. The extra
+        trigger is gated on `_stepping` so free-running and breakpoint-only
+        behavior keeps exactly the boundaries it always had.
+
         A breakpoint is checked independently of the stepping state, so a
         breakpoint inside a function being *stepped over* still pauses -
         the same precedence every mainstream debugger uses. It is *not*
         checked independently of the pause it just resumed from, though:
-        see `_suppresses_breakpoint`."""
+        see `_resumed_statement`."""
         if self._stop_requested:
             raise DebugStopped()
-        if line is None or line == self._prev_line:
+        depth = len(self.call_stack)
+        if line is None or (line == self._prev_line
+                            and not (self._stepping and depth != self._prev_depth)):
             return
         self._prev_line = line
+        self._prev_depth = depth
         if self.on_line is not None:
             self.on_line(line)
         # Evaluated at *every* boundary, not folded into the condition below:
@@ -446,20 +464,31 @@ class IRExecutor:
 
         Step-into (`_step_depth is None`) takes the very next boundary,
         wherever it lands, including the first line of a callee. Step-over
-        additionally requires that we're back in the frame the step was
-        issued from - or shallower, so stepping over a `return` lands in the
-        caller and an exception unwinding several frames still pauses at its
-        catch handler - and that we aren't merely resuming the *same* line
-        we stepped off of. That last clause matters because a call is rarely
-        the whole statement: `int x = f();` lowers to PARAM/CALL/ASSIGN quads
-        that all carry one line, so control comes back to that line after
-        RETURN and would otherwise stop a second time on the line the user
-        just asked to step past."""
+        splits the two ways of being back in (or out of) the frame the step
+        was issued from, because only one of them wants the same-line veto:
+
+        *Shallower* than the arming frame - we stepped over a `return`, or an
+        exception unwound past it - is always a stop, whatever the line. The
+        line is no longer meaningful there: it belongs to a different frame's
+        statement, so it may legitimately repeat. `return n * factorial(n-1);`
+        is the case that matters. Every frame of that recursion pauses on the
+        same source line, and vetoing it by number made a Step Over inside the
+        recursion skip every intermediate frame and surface at the top-level
+        call - a Continue wearing a Step Over's name.
+
+        *Exactly* the arming depth keeps the veto: a call is rarely the whole
+        statement. `int x = f();` lowers to PARAM/CALL/ASSIGN quads that all
+        carry one line, so control comes back to that same line, in that same
+        frame, after RETURN - and stopping there would stop a second time on
+        the line the user just asked to step past."""
         if not self._stepping:
             return False
         if self._step_depth is None:
             return True
-        return len(self.call_stack) <= self._step_depth and line != self._step_line
+        depth = len(self.call_stack)
+        if depth < self._step_depth:
+            return True
+        return depth == self._step_depth and line != self._step_line
 
     @property
     def paused(self):
@@ -484,10 +513,14 @@ class IRExecutor:
     def dbg_step_over(self):
         """Resume a paused run for one more source line *in the current
         frame*, running any function this line calls to completion instead
-        of pausing inside it. Same threading contract as `dbg_step`: the
-        `paused` check is what makes reading `call_stack` and `_prev_line`
-        from the caller's thread safe here - the executor thread is parked
-        in `_check_pause`, so neither can move under us."""
+        of pausing inside it. Stepping over the call in a recursive function
+        pauses in that function's own caller - the same source line, one
+        frame shallower - rather than running the whole recursion out.
+
+        Same threading contract as `dbg_step`: the `paused` check is what
+        makes reading `call_stack` and `_prev_line` from the caller's thread
+        safe here - the executor thread is parked in `_check_pause`, so
+        neither can move under us."""
         if not self._paused:
             return
         self._stepping = True
